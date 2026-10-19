@@ -1,0 +1,15 @@
+# 登录态（含抖音 cookie，切勿提交）
+.auth/
+
+# 运行时产物
+live_data.db
+live_capture.jsonl
+*.log
+
+# Python
+__pycache__/
+*.pyc
+
+# 编辑器 / 工具
+.trae-html-share-packages/
+.DS_Store
