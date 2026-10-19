@@ -13,3 +13,7 @@ __pycache__/
 # 编辑器 / 工具
 .trae-html-share-packages/
 .DS_Store
+
+# Node / 前端
+node_modules/
+dist/
