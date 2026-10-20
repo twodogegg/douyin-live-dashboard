@@ -47,11 +47,13 @@ let PREV_SUMMARY = ''
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 const stamp = () => new Date().toTimeString().slice(0, 8)
 
-export function init({ agentPath, defaultAgentPath, settle }) {
+export async function init({ agentPath, defaultAgentPath, settle }) {
   agentFile = agentPath
   AGENT_CONF = agentStore.load(agentPath, defaultAgentPath)
   if (settle) SETTLE = settle
   liveSes = session.fromPartition(PARTITION)
+  // 抖音是国内服务：固定直连，避免系统代理节点切换导致登录 IP 变化、被判定为新设备
+  await liveSes.setProxy({ mode: 'direct' })
   watchCookies()
 }
 

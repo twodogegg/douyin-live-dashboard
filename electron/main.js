@@ -59,7 +59,7 @@ if (!app.requestSingleInstanceLock()) {
 
     const userData = app.getPath('userData')
     db.initDb(path.join(userData, 'live_data.db'))
-    live.init({
+    await live.init({
       agentPath: path.join(userData, 'agent_config.json'),
       defaultAgentPath: path.join(__dirname, 'default-agent-config.json'),
       settle: Number(process.env.DY_SETTLE) || 12000,
