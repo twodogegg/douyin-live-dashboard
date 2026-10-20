@@ -15,10 +15,11 @@ header h1 { font-size: 16px; font-weight: 600; white-space: nowrap; }
 .room { color: var(--dim); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 320px; }
 .stats { margin-left: auto; display: flex; gap: 14px; font-size: 12px; color: var(--dim); white-space: nowrap; }
 .stats b { color: var(--text); font-weight: 600; }
-button { background: var(--panel2); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 5px 12px; cursor: pointer; font-size: 13px; }
+button { background: var(--panel2); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 5px 12px; cursor: pointer; font-size: 13px; white-space: nowrap; }
 button:hover { border-color: var(--dim); }
 button:disabled { opacity: .45; cursor: not-allowed; }
 .pill { font-size: 11px; padding: 2px 9px; border-radius: 999px; background: var(--panel2); border: 1px solid var(--border); color: var(--dim); white-space: nowrap; }
+button.pill { cursor: pointer; }
 .pill.on { color: #2ecc71; border-color: rgba(46,204,113,.4); }
 header input { background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 5px 10px; font-size: 13px; width: 170px; }
 header input:focus { outline: none; border-color: var(--accent2); }

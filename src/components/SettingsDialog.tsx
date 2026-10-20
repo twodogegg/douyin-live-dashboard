@@ -177,7 +177,7 @@ export function SettingsDialog({
           </button>
         </div>
         <div className="note">
-          Key 不会写入服务器磁盘，仅保存在你自己的浏览器里。Agent 配置保存到项目根目录的 agent_config.json。
+          Key 不会写入服务器磁盘，仅保存在你自己的浏览器里。Agent 配置保存在本机应用数据目录的 agent_config.json。
         </div>
       </div>
     </div>

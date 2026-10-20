@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { api } from './api'
 import { AiFeed } from './components/AiFeed'
+import { AccountDialog } from './components/AccountDialog'
 import { Header } from './components/Header'
 import { HistoryDialog } from './components/HistoryDialog'
 import { LoginGate } from './components/LoginGate'
@@ -19,6 +20,7 @@ export default function App() {
   const [loginMsg, setLoginMsg] = useState('')
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [historyOpen, setHistoryOpen] = useState(false)
+  const [accountOpen, setAccountOpen] = useState(false)
   const [aiTag, setAiTag] = useState('未配置')
   const booted = useRef(false)
 
@@ -29,7 +31,7 @@ export default function App() {
     setLoginMsg('正在打开浏览器…')
     const r = await api.loginStart()
     setLoginMsg(
-      r && r.ok ? '浏览器已打开，请完成扫码登录后点「我已登录完成」' : '打开失败，请确认后端服务正常',
+      r && r.ok ? '登录窗口已打开，请完成扫码登录后点「我已登录完成」' : '打开失败，请确认服务正常',
     )
   }
 
@@ -119,6 +121,8 @@ export default function App() {
         onToggleConn={toggleConn}
         onOpenHistory={() => setHistoryOpen(true)}
         onOpenSettings={() => setSettingsOpen(true)}
+        onShowLiveWindow={() => api.showLiveWindow()}
+        onOpenAccount={() => setAccountOpen(true)}
       />
 
       <main>
@@ -143,6 +147,9 @@ export default function App() {
       </main>
 
       {!loggedIn && <LoginGate msg={loginMsg} onStart={startLogin} onDone={finishLogin} />}
+      {accountOpen && (
+        <AccountDialog onClose={() => setAccountOpen(false)} onChanged={setLoggedIn} />
+      )}
       {settingsOpen && (
         <SettingsDialog onClose={() => setSettingsOpen(false)} onSaved={(tag) => setAiTag(tag)} />
       )}

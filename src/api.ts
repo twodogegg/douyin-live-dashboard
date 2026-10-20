@@ -49,6 +49,8 @@ export const api = {
   loginStatus: () => req<{ logged_in: boolean }>('/login/status'),
   loginStart: () => req<LoginResult>('/login/start', post()),
   loginComplete: () => req<LoginResult>('/login/complete', post()),
+  loginSave: () => req<LoginResult>('/login/save', post()),
+  loginClear: () => req<LoginResult>('/login/clear', post()),
   connect: (room_id: string) => req<ConnResult>('/connect', post({ room_id })),
   disconnect: () => req<ConnResult>('/disconnect', post()),
   saveConfig: (c: ConfigPayload) => req<ConfigResult>('/config', post(c)),
@@ -57,6 +59,7 @@ export const api = {
   saveAgentConfig: (c: AgentConfig) => req<AgentSaveResult>('/agent', post(c)),
   history: (limit = 60) => req<{ windows: HistoryWindow[] }>(`/history?limit=${limit}`),
   historyWindow: (id: number) => req<{ messages: HistoryMessage[] }>(`/history/${id}`),
+  showLiveWindow: () => req<{ ok: boolean; visible?: boolean }>('/window/show', post()),
 }
 
 export type { AiCard, MsgItem, Stat }

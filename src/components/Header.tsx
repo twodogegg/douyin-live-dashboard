@@ -13,6 +13,8 @@ export function Header({
   onToggleConn,
   onOpenHistory,
   onOpenSettings,
+  onShowLiveWindow,
+  onOpenAccount,
 }: {
   stat: Stat
   wsDown: boolean
@@ -26,6 +28,8 @@ export function Header({
   onToggleConn: () => void
   onOpenHistory: () => void
   onOpenSettings: () => void
+  onShowLiveWindow: () => void
+  onOpenAccount: () => void
 }) {
   const dotClass = 'dot' + (stat.status === '已进房' ? ' on' : String(stat.status).includes('异常') || wsDown ? ' err' : '')
   const roomText = wsDown
@@ -38,7 +42,9 @@ export function Header({
     <header>
       <span className={dotClass} />
       <h1>抖音语音直播间 AI 看板</h1>
-      <span className={`pill${loggedIn ? ' on' : ''}`}>{loggedIn ? '已登录' : '未登录'}</span>
+      <button className={`pill${loggedIn ? ' on' : ''}`} onClick={onOpenAccount}>
+        {loggedIn ? '已登录' : '未登录'}
+      </button>
       <input
         placeholder="填写语音直播间号"
         autoComplete="off"
@@ -65,6 +71,7 @@ export function Header({
         </span>
         <span>{stat.last_ai ? `上次摘要 ${stat.last_ai}` : ''}</span>
       </div>
+      <button onClick={onShowLiveWindow}>直播窗口</button>
       <button onClick={onOpenHistory}>🕘 历史</button>
       <button onClick={onOpenSettings}>⚙ 设置</button>
     </header>

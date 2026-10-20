@@ -1,25 +1,84 @@
 {
   "name": "douyin-live-dashboard",
-  "private": true,
+  "productName": "抖音直播看板",
   "version": "0.1.0",
+  "description": "抖音语音直播间 AI 实时看板（Electron 桌面版）",
+  "author": "twodogegg",
+  "private": true,
   "type": "module",
+  "main": "electron/main.js",
   "scripts": {
     "dev": "concurrently -k -n api,web -c cyan,magenta \"npm:dev:api\" \"npm:dev:web\"",
     "dev:api": "python3.10 live_server.py --port 18732",
     "dev:web": "vite",
+    "dev:desktop": "concurrently -k -n web,app -c magenta,cyan \"vite\" \"wait-on tcp:127.0.0.1:18731 && cross-env DY_DEV_URL=http://localhost:18731 DY_PORT=18732 electron .\"",
     "build": "tsc --noEmit && vite build",
-    "preview": "vite preview"
+    "desktop": "npm run build && electron .",
+    "desktop:build": "npm run build && electron-builder",
+    "desktop:build:mac": "npm run build && electron-builder --mac",
+    "desktop:build:win": "npm run build && electron-builder --win",
+    "postinstall": "electron-builder install-app-deps"
   },
   "dependencies": {
+    "better-sqlite3": "^13.0.3",
     "react": "^18.3.1",
-    "react-dom": "^18.3.1"
+    "react-dom": "^18.3.1",
+    "ws": "^8.22.0"
   },
   "devDependencies": {
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
     "@vitejs/plugin-react": "^4.3.4",
     "concurrently": "^9.1.0",
+    "cross-env": "^10.1.0",
+    "electron": "^44.9.1",
+    "electron-builder": "^26.15.3",
     "typescript": "^5.6.3",
-    "vite": "^6.0.5"
+    "vite": "^6.0.5",
+    "wait-on": "^9.5.1"
+  },
+  "build": {
+    "appId": "com.twodogegg.douyinlive",
+    "productName": "抖音直播看板",
+    "artifactName": "DouyinLiveDashboard-${version}-${arch}.${ext}",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "electron/**/*",
+      "package.json"
+    ],
+    "asar": true,
+    "asarUnpack": [
+      "node_modules/better-sqlite3/**"
+    ],
+    "mac": {
+      "category": "public.app-category.utilities",
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "arm64",
+            "x64"
+          ]
+        }
+      ]
+    },
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true
+    }
   }
 }
