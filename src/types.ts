@@ -7,6 +7,9 @@ export type Stat = {
   ai_count: number
   last_ai: string
   logged_in: boolean
+  model?: string
+  window?: number
+  has_key?: boolean
 }
 
 // 区域1（主播侧）与区域2（观众侧）共用的消息结构。

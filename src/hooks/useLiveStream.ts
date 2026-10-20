@@ -80,6 +80,9 @@ export function useLiveStream() {
             [...prev, { time: m.time as string, count: m.count as number, pending: true }].slice(-MAX_KEEP),
           )
           break
+        case 'ai_drop':
+          setAi((prev) => prev.filter((x) => !(x.pending && x.time === m.time)))
+          break
         case 'ai': {
           const card: AiCard = {
             time: m.time as string,

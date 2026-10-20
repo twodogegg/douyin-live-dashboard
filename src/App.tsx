@@ -46,8 +46,11 @@ export default function App() {
       if (localStorage.getItem(LS.key)) {
         const conf = readLocalConfig()
         const r = await api.saveConfig(conf)
-        if (r && r.ok && r.has_key) setAiTag(`${conf.model} · 每 ${conf.window}s`)
+        if (r && r.ok && r.has_key) setAiTag(`${r.model} · 每 ${r.window}s`)
       }
+      // 后端可能已有配置（例如通过接口写入），以服务端状态为准回填标签
+      const cur = await api.getConfig()
+      if (cur && cur.has_key) setAiTag(`${cur.model} · 每 ${cur.window}s`)
     })()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
@@ -56,6 +59,13 @@ export default function App() {
   useEffect(() => {
     if (typeof stat.logged_in === 'boolean') setLoggedIn(stat.logged_in)
   }, [stat.logged_in])
+
+  // 以 WS 推送的后端配置为准，避免 localStorage 与后端不一致时标签显示错误
+  useEffect(() => {
+    if (typeof stat.has_key === 'boolean') {
+      setAiTag(stat.has_key ? `${stat.model} · 每 ${stat.window}s` : '未配置')
+    }
+  }, [stat.has_key, stat.model, stat.window])
 
   const finishLogin = async () => {
     setLoginMsg('检测中…')

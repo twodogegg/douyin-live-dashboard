@@ -5,6 +5,7 @@
 - 只接受语音直播间（房间数据 live_room_mode == 3），其它类型直接拒绝
 - 连接前先校验登录态：未登录则在浏览器里登录，回看板点「我已登录完成」保存登录态
 - 随时可断开连接，断开后可重新填写房号
+- 分析 Agent 的提示词与参数放在 agent_config.json，可在看板设置里在线修改
 - 内部用 Playwright（有头 Chrome，区域1 需要视频解码）持续抓取两路文本
 - WebSocket /ws 实时推送：r1 流式上屏、r2 弹幕、AI 摘要卡片、状态
 
@@ -23,15 +24,15 @@ import time
 import urllib.error
 import urllib.request
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import Body, FastAPI, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
 from playwright.async_api import async_playwright
 
+from agent_config import load as load_agent_config, save as save_agent_config, validate as validate_agent_config
 from douyin_live_scraper import DEFAULT_STATE, EXTRACT_JS
-from douyin_live_ai import SYSTEM_PROMPT, collapse_r1
+from douyin_live_ai import collapse_r1, collapse_r2, is_no_change, strip_change_marker
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
-REGION_LABEL = {"r1": "主播侧", "r2": "观众侧"}
 LIVE_HOME = "https://live.douyin.com/"
 VOICE_ROOM_MODE = 3          # 抖音 room.live_room_mode：3 = 语音直播间
 
@@ -49,6 +50,7 @@ STATE = {
     "last_ai": "",
 }
 AI_CONF = {"base_url": "https://api.darl.cn/v1", "model": "gpt-4o-mini", "key": "", "window": 20}
+AGENT_CONF = load_agent_config()   # 分析提示词与参数，全部来自 agent_config.json
 OPT = {"settle": 12000, "state": DEFAULT_STATE}
 
 BUF: dict = {}          # 当前分析窗口缓冲，(region, id) -> row
@@ -137,15 +139,21 @@ def db_upsert_msg(key: str, now: float, region: str, user: str, text: str, avata
     )
 
 
-def db_open_window(now: float, stamp: str, n: int) -> int:
-    """开一个分析窗口，并把「尚未归属窗口」的消息划进来（即本时段新增的那些）。"""
+def db_open_window(now: float, stamp: str, n: int, keys=None) -> int:
+    """开一个分析窗口，并只把本窗口实际缓冲的消息划进来。
+    不能按 ts 兜底，否则会把历史会话里尚未归属窗口的旧消息全部吞进当前窗口。"""
     cur = DB.execute(
         "INSERT INTO windows(ts, time, n, model, summary) VALUES(?,?,?,?,?)",
         (now, stamp, n, AI_CONF["model"], ""),
     )
-    DB.execute("UPDATE messages SET window_id=? WHERE window_id IS NULL AND ts<=?", (cur.lastrowid, now))
+    wid = cur.lastrowid
+    if keys:
+        DB.executemany("UPDATE messages SET window_id=? WHERE key=? AND window_id IS NULL",
+                       [(wid, k) for k in keys])
+    else:
+        DB.execute("UPDATE messages SET window_id=? WHERE window_id IS NULL AND ts<=?", (wid, now))
     DB.commit()
-    return cur.lastrowid
+    return wid
 
 
 def db_close_window(wid: int, summary: str):
@@ -287,20 +295,24 @@ async def broadcast(msg: dict):
 
 def stat_msg():
     keys = ("status", "room", "room_id", "r1_count", "r2_count", "ai_count", "last_ai")
-    return {"type": "stat", **{k: STATE[k] for k in keys}, "logged_in": STATE["logged_in"]}
+    return {"type": "stat", **{k: STATE[k] for k in keys}, "logged_in": STATE["logged_in"],
+            "model": AI_CONF["model"], "window": AI_CONF["window"],
+            "has_key": bool(AI_CONF["key"])}
 
 
 def call_llm(transcript: str, prev_summary: str) -> str:
-    if len(transcript) > 4000:
-        transcript = "（较早内容已截断）\n" + transcript[-4000:]
+    max_chars = int(AGENT_CONF["max_chars"])
+    if len(transcript) > max_chars:
+        transcript = "（较早内容已截断）\n" + transcript[-max_chars:]
     user = f"本时段直播间文本：\n{transcript}"
-    if prev_summary:
+    if AGENT_CONF["keep_prev_summary"] and prev_summary:
         user = f"上一时段摘要（供衔接参考）：\n{prev_summary}\n\n{user}"
     payload = {
         "model": AI_CONF["model"],
-        "temperature": 0.3,
-        "max_tokens": 500,
-        "messages": [{"role": "system", "content": SYSTEM_PROMPT}, {"role": "user", "content": user}],
+        "temperature": AGENT_CONF["temperature"],
+        "max_tokens": AGENT_CONF["max_tokens"],
+        "messages": [{"role": "system", "content": AGENT_CONF["system_prompt"]},
+                     {"role": "user", "content": user}],
     }
     req = urllib.request.Request(
         AI_CONF["base_url"].rstrip("/") + "/chat/completions",
@@ -319,31 +331,48 @@ async def maybe_analyze(last_flush: float) -> float:
     now = time.time()
     if now - last_flush < AI_CONF["window"]:
         return last_flush
-    if not AI_CONF["key"] or len(BUF) < 4:
+    if not AI_CONF["key"] or len(BUF) < AGENT_CONF["min_messages"]:
         return now if AI_CONF["key"] else last_flush  # 没 key 时不推进窗口，配好后立即能分析
 
-    rows = collapse_r1([r for r in BUF.values() if r["region"] == "r1"], 3.0) + \
-           [r for r in BUF.values() if r["region"] != "r1"]
+    r1_rows = collapse_r1([r for r in BUF.values() if r["region"] == "r1"], AGENT_CONF["r1_gap"])
+    r2_rows = [r for r in BUF.values() if r["region"] != "r1"]
+    if AGENT_CONF["merge_repeats"]:
+        r2_rows = collapse_r2(r2_rows, AGENT_CONF["repeat_max_chars"], AGENT_CONF["repeat_min_count"])
+    rows = r1_rows + r2_rows
+    keys = [r["db_key"] for r in BUF.values() if r.get("db_key")]
     n = len(BUF)
     BUF.clear()
     lines = []
     for r in sorted(rows, key=lambda r: r["ts"]):
         name = f"{r['user']}：" if r["user"] else ""
-        lines.append(f"[{REGION_LABEL[r['region']]}] {name}{r['text']}")
+        label = AGENT_CONF["region_labels"].get(r["region"], r["region"])
+        lines.append(f"[{label}] {name}{r['text']}")
     transcript = "\n".join(lines)
 
     stamp = time.strftime("%H:%M:%S")
-    wid = db_open_window(now, stamp, n)
+    wid = db_open_window(now, stamp, n, keys)
     await broadcast({"type": "ai_pending", "time": stamp, "count": n})
+    ok = True
     try:
         summary = await asyncio.to_thread(call_llm, transcript, PREV_SUMMARY)
     except urllib.error.HTTPError as e:
         summary = f"模型请求失败 HTTP {e.code}: {e.read().decode('utf-8', 'ignore')[:200]}"
+        ok = False
     except Exception as e:
         summary = f"模型请求失败: {e}"
-    else:
-        PREV_SUMMARY = summary
+        ok = False
+    if ok:
+        summary = strip_change_marker(summary) or AGENT_CONF["no_change_marker"]
+    no_change = ok and is_no_change(summary, AGENT_CONF["no_change_marker"])
     db_close_window(wid, summary)
+
+    # 没有实质变化：留档但不上屏，也不覆盖上一份有效摘要，避免连续雷同卡片
+    if no_change and AGENT_CONF["suppress_no_change"]:
+        await broadcast({"type": "ai_drop", "time": stamp})
+        return time.time()
+
+    if ok:
+        PREV_SUMMARY = summary
     STATE["ai_count"] += 1
     STATE["last_ai"] = stamp
     await broadcast({"type": "ai", "time": stamp, "count": n, "summary": summary,
@@ -397,11 +426,13 @@ async def scraper_task(rid: str):
                         continue
                     is_new = key not in SEEN
                     SEEN[key] = m["text"]
-                    BUF[key] = {"ts": now, "region": region, "user": m["user"], "text": m["text"]}
-                    avatar = AVATARS.get(norm_name(m["user"]))
                     # 键里带会话号：浏览器端节点 id 每次进房都从 1 重排，若只用 region:id，
                     # 重启后新消息会覆盖上一场同 id 的旧行，历史就被写花了。
-                    db_upsert_msg(f"{session}:{region}:{m['id']}", now, region, m["user"], m["text"], avatar)
+                    db_key = f"{session}:{region}:{m['id']}"
+                    BUF[key] = {"ts": now, "region": region, "user": m["user"],
+                                "text": m["text"], "db_key": db_key}
+                    avatar = AVATARS.get(norm_name(m["user"]))
+                    db_upsert_msg(db_key, now, region, m["user"], m["text"], avatar)
                     wrote = True
                     if region == "r1":
                         bid, text = track_r1_line(m, now)
@@ -472,6 +503,24 @@ async def set_config(c: Config):
 async def get_config():
     return {"base_url": AI_CONF["base_url"], "model": AI_CONF["model"],
             "window": AI_CONF["window"], "has_key": bool(AI_CONF["key"])}
+
+
+@app.get("/agent")
+async def get_agent_config():
+    """当前分析 Agent 配置（来自 agent_config.json）。"""
+    return AGENT_CONF
+
+
+@app.post("/agent")
+async def set_agent_config(c: dict = Body(...)):
+    """保存分析 Agent 配置：校验后写回 agent_config.json 并即时生效。"""
+    global AGENT_CONF
+    err = validate_agent_config(c)
+    if err:
+        return {"ok": False, "msg": err}
+    save_agent_config(c)
+    AGENT_CONF = c
+    return {"ok": True, "config": AGENT_CONF}
 
 
 @app.get("/login/status")

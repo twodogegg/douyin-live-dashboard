@@ -15,6 +15,7 @@ export default defineConfig({
     proxy: {
       '/ws': { target: `ws://127.0.0.1:${API_PORT}`, ws: true },
       '/config': BACKEND,
+      '/agent': BACKEND,
       '/login': BACKEND,
       '/connect': BACKEND,
       '/disconnect': BACKEND,

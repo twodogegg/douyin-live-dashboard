@@ -14,22 +14,17 @@
 import argparse
 import json
 import os
+import re
 import sys
 import time
 import urllib.error
 import urllib.request
 
+from agent_config import load as load_agent_config
 from douyin_live_scraper import DEFAULT_STATE, DEFAULT_URL, EXTRACT_JS, build_context, enter_room
 
-REGION_LABEL = {"r1": "主播侧", "r2": "观众侧"}
-
-SYSTEM_PROMPT = """你是抖音语音直播间的实时内容分析助手。
-输入是某个时间窗内该直播间的两路文本，已按来源标注：
-- [主播侧] 视频区上屏内容，多为麦上用户/主播的发言或唱词，文字是逐字上屏的，同一句话可能被合并成一条
-- [观众侧] 右侧聊天室弹幕，含观众发言、进场欢迎、送礼、点赞等
-
-请用中文输出 3-6 条要点式摘要，覆盖：主播侧此刻在做什么内容、观众侧的整体反应与代表性言论。
-要求：只基于给定文本，不要编造；不要逐句复述；每条一句话，可带代表性昵称做例子。"""
+AGENT = load_agent_config()          # 提示词与参数来自 agent_config.json
+REGION_LABEL = AGENT["region_labels"]
 
 
 def parse_args():
@@ -45,10 +40,10 @@ def parse_args():
     ap.add_argument("--duration", type=int, default=120, help="总运行时长（秒）")
 
     ap.add_argument("--window", type=int, default=20, help="每隔多少秒做一次 AI 分析")
-    ap.add_argument("--r1-gap", type=float, default=3.0, help="区域1 上屏内容的 burst 间隔（秒），超过则视为新的一句")
-    ap.add_argument("--min-messages", type=int, default=4, help="窗口内少于该条数则跳过本次分析")
-    ap.add_argument("--max-chars", type=int, default=4000, help="送模型的文本上限，超出保留最近部分")
-    ap.add_argument("--keep-context", action="store_true", default=True, help="把上一轮摘要作为上下文传入")
+    ap.add_argument("--r1-gap", type=float, default=AGENT["r1_gap"], help="区域1 上屏内容的 burst 间隔（秒），超过则视为新的一句")
+    ap.add_argument("--min-messages", type=int, default=AGENT["min_messages"], help="窗口内少于该条数则跳过本次分析")
+    ap.add_argument("--max-chars", type=int, default=AGENT["max_chars"], help="送模型的文本上限，超出保留最近部分")
+    ap.add_argument("--keep-context", action="store_true", default=AGENT["keep_prev_summary"], help="把上一轮摘要作为上下文传入")
 
     ap.add_argument("--base-url", default="https://api.darl.cn/v1")
     ap.add_argument("--model", default="gpt-4o-mini")
@@ -99,10 +94,46 @@ def collapse_r1(rows, gap):
     return out
 
 
+def collapse_r2(rows, max_chars=16, min_count=2):
+    """观众侧重复短弹幕合并：同一文本出现多次时只留一条并标注次数。
+    词数刷屏（666、好听、哈哈哈）不再逐条占用上下文，也不会让模型只看到重复内容。"""
+    groups, out = {}, []
+    for r in rows:
+        t = re.sub(r"\s+", "", r["text"] or "")
+        if t and len(t) <= max_chars:
+            groups.setdefault(t, []).append(r)
+        else:
+            out.append(r)
+    for rs in groups.values():
+        if len(rs) < min_count:
+            out.extend(rs)
+            continue
+        last = max(rs, key=lambda x: x["ts"])
+        out.append({**last, "text": f"{last['text'].strip()}（×{len(rs)}）"})
+    return out
+
+
+def is_no_change(summary, marker):
+    """模型首行是否为无变化标记。"""
+    lines = summary.strip().splitlines()
+    first = lines[0].strip().strip("-•* ").upper() if lines else ""
+    return first == marker.strip().upper()
+
+
+def strip_change_marker(summary):
+    """去掉 CHANGE 首行，只保留增量要点。"""
+    lines = summary.strip().splitlines()
+    if lines and lines[0].strip().strip("-•* ").upper() == "CHANGE":
+        return "\n".join(lines[1:]).strip()
+    return summary.strip()
+
+
 def build_transcript(buf, gap):
-    """区域2 是独立弹幕，逐条保留。"""
-    rows = collapse_r1([r for r in buf.values() if r["region"] == "r1"], gap) + \
-           [r for r in buf.values() if r["region"] != "r1"]
+    """区域2 是独立弹幕；重复短句先合并，再与折叠后的区域1 按时间排序。"""
+    r2 = [r for r in buf.values() if r["region"] != "r1"]
+    if AGENT["merge_repeats"]:
+        r2 = collapse_r2(r2, AGENT["repeat_max_chars"], AGENT["repeat_min_count"])
+    rows = collapse_r1([r for r in buf.values() if r["region"] == "r1"], gap) + r2
     lines = []
     for r in sorted(rows, key=lambda r: r["ts"]):
         name = f"{r['user']}：" if r["user"] else ""
@@ -119,9 +150,10 @@ def call_llm(args, key, transcript, prev_summary):
 
     payload = {
         "model": args.model,
-        "temperature": 0.3,
-        "max_tokens": 500,
-        "messages": [{"role": "system", "content": SYSTEM_PROMPT}, {"role": "user", "content": user}],
+        "temperature": AGENT["temperature"],
+        "max_tokens": AGENT["max_tokens"],
+        "messages": [{"role": "system", "content": AGENT["system_prompt"]},
+                     {"role": "user", "content": user}],
     }
     req = urllib.request.Request(
         args.base_url.rstrip("/") + "/chat/completions",
@@ -176,6 +208,10 @@ def main():
                 log(f"[warn] 模型请求失败: {e}")
                 return
             stamp = time.strftime("%H:%M:%S")
+            if AGENT["suppress_no_change"] and is_no_change(summary, AGENT["no_change_marker"]):
+                log(f"[{stamp}] 无实质变化，跳过记录")
+                return
+            summary = strip_change_marker(summary)
             log(f"[{stamp}] 本时段 {n} 条 · {time.time() - t0:.1f}s\n{summary}")
             prev_summary = summary
             analyses += 1

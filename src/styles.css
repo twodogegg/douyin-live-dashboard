@@ -59,6 +59,13 @@ main { flex: 1; display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; pa
 .dlg label { display: block; font-size: 12px; color: var(--dim); margin: 10px 0 4px; }
 .dlg input { width: 100%; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px; color: var(--text); font-size: 13px; }
 .dlg input:focus { outline: none; border-color: var(--ai); }
+.dlg textarea { width: 100%; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px; color: var(--text); font: inherit; font-size: 13px; resize: vertical; }
+.dlg textarea:focus { outline: none; border-color: var(--ai); }
+.dlg.settings { width: 620px; max-height: 88vh; overflow-y: auto; }
+.dlg h4 { font-size: 13px; margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--border); }
+.dlg .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 12px; }
+.dlg label.check { display: flex; align-items: center; gap: 6px; margin-top: 18px; color: var(--text); font-size: 12px; }
+.dlg label.check input { width: auto; }
 .dlg .row { display: flex; gap: 10px; justify-content: flex-end; align-items: center; margin-top: 16px; }
 .dlg .primary { background: var(--ai); border-color: var(--ai); color: #fff; }
 .dlg .note { font-size: 11px; color: var(--dim); margin-top: 10px; }
