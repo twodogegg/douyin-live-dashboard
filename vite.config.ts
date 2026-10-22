@@ -20,6 +20,8 @@ export default defineConfig({
       '/connect': BACKEND,
       '/disconnect': BACKEND,
       '/history': BACKEND,
+      '/dm': BACKEND,
+      '/window': BACKEND,
     },
   },
 })

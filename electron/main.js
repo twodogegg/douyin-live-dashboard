@@ -13,7 +13,6 @@ const PORT = Number(process.env.DY_PORT) || 0
 
 // 有头 Chromium 才能正常解码视频与维持后台轮询；同时去掉 UA 里的 Electron 标识。
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required')
-app.commandLine.appendSwitch('mute-audio')
 app.commandLine.appendSwitch('disable-background-timer-throttling')
 app.commandLine.appendSwitch('disable-renderer-backgrounding')
 app.commandLine.appendSwitch('disable-backgrounding-occluded-windows')

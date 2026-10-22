@@ -6,6 +6,7 @@ import { WebSocketServer } from 'ws'
 import * as live from './live.js'
 import * as im from './im.js'
 import * as db from './db.js'
+import * as media from './media.js'
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -126,10 +127,30 @@ export function startServer({ port = 0, staticDir }) {
       }
       if (p === '/dm/member' && req.method === 'POST') {
         const body = await readBody(req)
-        return json(res, await im.memberChat(body.idx))
+        return json(res, await im.memberChat(body.conv_id, body.member_id))
       }
-      if (p === '/dm/member-follow' && req.method === 'POST') return json(res, await im.followMember())
-      if (p === '/dm/attach' && req.method === 'POST') return json(res, await im.attachFiles())
+      if (p === '/dm/member-follow' && req.method === 'POST') {
+        const body = await readBody(req)
+        return json(res, await im.followMember(body.conv_id, body.member_id))
+      }
+      if (p === '/dm/media/resolve' && req.method === 'POST') {
+        const body = await readBody(req)
+        return json(res, await media.prepareMedia(await im.mediaMessage(body.key), !!body.refresh))
+      }
+      if (p === '/dm/media/open' && req.method === 'POST') {
+        const body = await readBody(req)
+        return json(res, await im.openMedia(body.key))
+      }
+      const video = p.match(/^\/dm\/media\/(.+)$/)
+      if (video && req.method === 'GET') {
+        const index = url.searchParams.get('image')
+        if (index !== null && !/^\d+$/.test(index)) return json(res, { ok: false, msg: '图片序号无效' }, 400)
+        return await media.streamMedia(db.dmGetMsg(decodeURIComponent(video[1])), req, res, index === null ? null : Number(index))
+      }
+      if (p === '/dm/attach' && req.method === 'POST') {
+        const body = await readBody(req)
+        return json(res, await im.attachFiles(body.conv_id))
+      }
       if (p === '/dm/agent' && req.method === 'GET') return json(res, im.getAgent())
       if (p === '/dm/agent' && req.method === 'POST') return json(res, im.setAgent(await readBody(req)))
 
@@ -162,6 +183,7 @@ export function startServer({ port = 0, staticDir }) {
 
       json(res, { ok: false, msg: 'Not Found' }, 404)
     } catch (e) {
+      if (res.headersSent) return res.destroy()
       json(res, { ok: false, msg: String(e.message || e) }, 500)
     }
   })

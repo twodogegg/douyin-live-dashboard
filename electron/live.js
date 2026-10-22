@@ -188,6 +188,7 @@ export function ensureLiveWindow(show = false) {
       sandbox: true,
     },
   })
+  liveWin.webContents.setAudioMuted(true)
   liveWin.on('close', (e) => {
     if (!shuttingDown) {
       e.preventDefault()

@@ -21,7 +21,18 @@ export function useDmStream() {
   const [activeId, setActiveId] = useState('')
   const [msgs, setMsgs] = useState<DmMsg[]>([])
   const [wsDown, setWsDown] = useState(false)
+  const [selecting, setSelecting] = useState(false)
+  const [selectionError, setSelectionError] = useState('')
   const activeRef = useRef('')
+  const selection = useRef(0)
+
+  const activateConv = useCallback((id: string) => {
+    selection.current++
+    activeRef.current = id
+    setActiveId(id)
+    setSelecting(false)
+    setSelectionError('')
+  }, [])
 
   useEffect(() => {
     activeRef.current = activeId
@@ -30,8 +41,9 @@ export function useDmStream() {
       return
     }
     let alive = true
+    setMsgs([])
     api.dmMsgs(activeId).then((r) => {
-      if (alive && r) setMsgs(r.messages)
+      if (alive && r) setMsgs(prev => [...new Map([...r.messages, ...prev.filter(m => m.conv_id === activeId)].map(m => [m.key, m])).values()].sort((a, b) => a.ts - b.ts))
     })
     setConvs((prev) => prev.map((c) => (c.id === activeId ? { ...c, unread: 0 } : c)))
     return () => {
@@ -46,10 +58,18 @@ export function useDmStream() {
 
   // 选中会话时同步在私信窗口里打开它，后续发送才对得上
   const openConv = useCallback(async (id: string) => {
+    const version = ++selection.current
+    setSelecting(true)
+    setSelectionError('')
+    const r = await api.dmSelect(id)
+    if (version !== selection.current) return
+    setSelecting(false)
+    if (!r?.ok) {
+      setSelectionError(r?.msg || '切换会话失败')
+      return
+    }
+    activeRef.current = id
     setActiveId(id)
-    await api.dmSelect(id)
-    const r = await api.dmMsgs(id)
-    if (r) setMsgs(r.messages)
   }, [])
 
   // 首次进入：拉一次状态与已有会话
@@ -65,7 +85,7 @@ export function useDmStream() {
 
     const upsert = (conv: DmConv) =>
       setConvs((prev) => {
-        const next = prev.filter((c) => c.id !== conv.id)
+        const next = prev.filter((c) => c.id !== conv.id && c.id !== conv.legacy_id)
         next.push(conv)
         return next.sort((a, b) => b.last_ts - a.last_ts)
       })
@@ -78,6 +98,17 @@ export function useDmStream() {
         case 'dm_conv':
           if (m.conv) upsert(m.conv as DmConv)
           break
+        case 'dm_selected':
+          activateConv(String(m.conv_id))
+          refreshConvs()
+          break
+        case 'dm_msg_update': {
+          const msg = m.msg as DmMsg
+          if (msg?.conv_id === activeRef.current) {
+            setMsgs(prev => [...prev.filter(x => x.key !== msg.key && x.key !== m.old_key), msg].sort((a, b) => a.ts - b.ts))
+          }
+          break
+        }
         case 'dm_msg': {
           const msg = m.msg as DmMsg
           if (!msg) break
@@ -124,7 +155,7 @@ export function useDmStream() {
       if (timer) clearTimeout(timer)
       ws?.close()
     }
-  }, [])
+  }, [refreshConvs, activateConv])
 
-  return { stat, convs, activeId, msgs, wsDown, openConv, refreshConvs }
+  return { stat, convs, activeId, msgs, wsDown, selecting, selectionError, openConv, activateConv, refreshConvs }
 }

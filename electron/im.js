@@ -5,7 +5,7 @@ import fs from 'node:fs'
 import * as db from './db.js'
 import * as live from './live.js'
 import {
-  IM_SCAN_JS, IM_OPEN_JS, IM_SEND_JS, IM_DUMP_JS, IM_OPEN_INFO_JS, IM_GROUP_JS, IM_MEMBER_DM_JS,
+  IM_SCAN_JS, IM_OPEN_JS, IM_SEND_JS, IM_DUMP_JS, IM_OPEN_INFO_JS, IM_GROUP_JS, IM_OPEN_MEDIA_JS, IM_FIND_MEDIA_JS,
 } from './im-extract.js'
 
 const PARTITION = 'persist:douyin'
@@ -36,9 +36,11 @@ let shuttingDown = false
 let agentFile = ''
 let AGENT = { system_prompt: FALLBACK_PROMPT, temperature: 0.6 }
 let lastStatJson = ''
-let lastPrune = 0
+let working = false
+let operations = Promise.resolve()
+const MEMBERS = new Map()
+const PROFILES = new Map()
 
-const IDX = new Map() // conv_id -> 列表下标
 const CONV = new Map() // conv_id -> 上次扫描到的会话快照
 const PREV = new Map() // conv_id -> 上次扫描到的消息指纹（dir|text）
 const CHILDREN = [] // 弹出的子窗口（成员主页/单聊）
@@ -94,6 +96,7 @@ function ensureWindow() {
       sandbox: true,
     },
   })
+  win.webContents.setAudioMuted(true)
   win.on('close', (e) => {
     if (!shuttingDown) {
       e.preventDefault()
@@ -198,10 +201,12 @@ export async function showWindow() {
   return { ok: true }
 }
 
-export async function syncOnce() {
-  if (!started) return { ok: false, msg: '私信还没启动' }
-  await tick()
-  return { ok: true, ...dmStat() }
+export function syncOnce() {
+  return withWindow(async () => {
+    if (!started) return { ok: false, msg: '私信还没启动' }
+    ingest(await evalJs(ensureWindow(), IM_SCAN_JS))
+    return { ok: true, ...dmStat() }
+  })
 }
 
 export async function dumpPage() {
@@ -211,153 +216,207 @@ export async function dumpPage() {
 }
 
 
-// 打开群信息面板并读取群资料
-export async function groupInfo(convId) {
-  if (!started) return { ok: false, msg: '私信还没启动' }
-  if (convId && convId !== DM.active_id) await select(convId)
-  const w = ensureWindow()
-  const opened = await evalJs(w, IM_OPEN_INFO_JS)
-  if (!opened || !opened.ok) return opened || { ok: false, msg: '打开群信息失败' }
-  if (!opened.already) await sleep(900)
-  return evalJs(w, IM_GROUP_JS)
+// 所有会改变当前会话的操作排队执行，避免发送、切换与读取群成员互相干扰。
+function withWindow(task) {
+  const result = operations.then(async () => {
+    working = true
+    try { return await task() } finally { working = false }
+  })
+  operations = result.catch(() => {})
+  return result
 }
 
-// 在子窗口里等「私信」按钮并点开聊天
-const FIND_MSG_BTN = `() => {
-  const b = [...document.querySelectorAll('button')].find(x => (x.innerText || '').trim() === '私信');
-  if (!b) return { ok: false };
-  const r = b.getBoundingClientRect();
-  return { ok: true, x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2), w: Math.round(r.width) };
+export function groupInfo(convId) {
+  return withWindow(async () => {
+    const selected = await selectConversation(convId)
+    if (!selected.ok) return selected
+    const w = ensureWindow()
+    const opened = await evalJs(w, IM_OPEN_INFO_JS)
+    if (!opened?.ok) return opened || { ok: false, msg: '打开群信息失败' }
+    if (!opened.already) await sleep(300)
+    const group = await evalJs(w, IM_GROUP_JS)
+    if (group?.ok) MEMBERS.set(convId, new Map(group.members.map(m => [m.id, m])))
+    return group
+  })
+}
+
+const PROFILE_BUTTON = `(pattern) => {
+  const button = [...document.querySelectorAll('button')].find(b => {
+    const r = b.getBoundingClientRect();
+    return r.width > 0 && r.height > 0 && new RegExp(pattern).test((b.innerText || '').trim());
+  });
+  if (!button) return null;
+  const r = button.getBoundingClientRect();
+  return { text: button.innerText.trim(), x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) };
 }`
 
-const CHILD_CHAT_STATE = `() => {
-  const list = document.querySelector('.messageMessageListlist');
-  const box = list ? list.getBoundingClientRect() : null;
-  // 只看当前对话的消息区，避免把左侧别的会话预览误判成限制提示
-  const chatText = list ? (list.innerText || '') : '';
-  const pageText = document.body.innerText || '';
-  const followBtn = [...document.querySelectorAll('button')]
-    .find(x => /^(关注|已关注|相互关注|互相关注)$/.test((x.innerText || '').trim()));
-  return {
-    hasChat: !!(box && box.width > 100) && !!document.querySelector('[data-e2e="msg-input"]'),
-    limited: /只能发送一条文字消息/.test(chatText),
-    needFollow: /关注后才能私信|关注后即可私信|仅关注的人/.test(pageText),
-    followText: followBtn ? (followBtn.innerText || '').trim() : '',
-  };
-}`
+async function profileFor(convId, memberId) {
+  const member = MEMBERS.get(convId)?.get(memberId)
+  if (!member || !/^MS4[\w.-]+$/.test(member.sec_uid)) throw new Error('成员信息已失效，请重新读取群成员')
+  let profile = PROFILES.get(member.sec_uid)
+  const url = 'https://www.douyin.com/user/' + member.sec_uid
+  if (profile && !profile.isDestroyed() && profile.webContents.getURL().split('?')[0] !== url) profile.destroy()
+  if (!profile || profile.isDestroyed()) {
+    profile = new BrowserWindow({
+      width: 1100, height: 800, show: false, title: member.name,
+      webPreferences: { partition: PARTITION, backgroundThrottling: false, contextIsolation: true, nodeIntegration: false, sandbox: true },
+    })
+    profile.webContents.setAudioMuted(true)
+    wireChild(profile)
+    PROFILES.set(member.sec_uid, profile)
+    profile.loadURL(url).catch(() => {})
+  }
+  return { member, profile }
+}
 
-async function waitNewChild(beforeIds) {
-  for (let i = 0; i < 16; i++) {
-    await sleep(500)
-    const found = CHILDREN.filter((w) => !w.isDestroyed() && !beforeIds.has(w.id))
-    if (found.length) return found[found.length - 1]
+async function waitButton(profile, pattern) {
+  for (let n = 0; n < 40; n++) {
+    if (profile.isDestroyed()) break
+    const button = await evalJs(profile, PROFILE_BUTTON, pattern).catch(() => null)
+    if (button) return button
+    await sleep(250)
   }
   return null
 }
 
-async function startChatInChild(child) {
-  for (let i = 0; i < 16; i++) {
-    const btn = await evalJs(child, FIND_MSG_BTN).catch(() => null)
-    if (btn && btn.ok) {
-      if (btn.w > 0) {
-        child.showInactive()
-        child.webContents.sendInputEvent({ type: 'mouseMove', x: btn.x, y: btn.y })
-        child.webContents.sendInputEvent({ type: 'mouseDown', x: btn.x, y: btn.y, button: 'left', clickCount: 1 })
-        child.webContents.sendInputEvent({ type: 'mouseUp', x: btn.x, y: btn.y, button: 'left', clickCount: 1 })
+function clickButton(profile, button, member) {
+  if (new URL(profile.webContents.getURL()).pathname !== '/user/' + member.sec_uid) throw new Error('成员页面已切换，请重试')
+  profile.showInactive()
+  profile.webContents.sendInputEvent({ type: 'mouseDown', x: button.x, y: button.y, button: 'left', clickCount: 1 })
+  profile.webContents.sendInputEvent({ type: 'mouseUp', x: button.x, y: button.y, button: 'left', clickCount: 1 })
+}
+
+export function followMember(convId, memberId) {
+  return withWindow(async () => {
+    if (!started) return { ok: false, msg: '私信还没启动' }
+    const { profile, member } = await profileFor(convId, memberId)
+    const pattern = '^(关注|回关|已关注|相互关注|互相关注)$'
+    const before = await waitButton(profile, pattern)
+    if (!before) return { ok: false, msg: '没有找到该成员的关注按钮，请在抖音窗口查看' }
+    if (/已关注|相互关注|互相关注/.test(before.text)) return { ok: true, already: true, after: before.text }
+    clickButton(profile, before, member)
+    for (let n = 0; n < 20; n++) {
+      await sleep(250)
+      const after = await evalJs(profile, PROFILE_BUTTON, pattern).catch(() => null)
+      if (after && /已关注|相互关注|互相关注/.test(after.text)) {
+        profile.hide()
+        return { ok: true, after: after.text }
       }
-      await sleep(2000)
-      let st = await evalJs(child, CHILD_CHAT_STATE).catch(() => null)
-      if (st && st.hasChat) return st
-      // 真实点击没生效时再用页面内 click()
-      await evalJs(
-        child,
-        `() => { const b = [...document.querySelectorAll('button')].find(x => (x.innerText || '').trim() === '私信'); if (b) b.click(); }`,
-      ).catch(() => {})
-      await sleep(2500)
-      st = await evalJs(child, CHILD_CHAT_STATE).catch(() => null)
-      return st || { hasChat: false }
     }
-    await sleep(500)
-  }
-  return { hasChat: false }
+    return { ok: false, msg: '关注状态未变化，请在抖音窗口查看是否需要验证' }
+  })
 }
 
-// 点群成员头像 → 打开其主页 → 自动点「私信」进入单聊
-export async function memberChat(idx) {
+export function memberChat(convId, memberId) {
+  return withWindow(async () => {
+    if (!started) return { ok: false, msg: '私信还没启动' }
+    const member = MEMBERS.get(convId)?.get(memberId)
+    if (!member) return { ok: false, msg: '成员信息已失效，请重新读取群成员' }
+    let target = [...CONV.values()].find(c => c.peer_sec_uid === member.sec_uid)
+    if (!target) {
+      const { profile } = await profileFor(convId, memberId)
+      const button = await waitButton(profile, '^私信$')
+      if (!button) return { ok: false, msg: '该成员没有可用的私信入口' }
+      clickButton(profile, button, member)
+      // 抖音原生入口创建会话后，同账号的私信页会同步该会话。
+      for (let n = 0; n < 32; n++) {
+        await sleep(250)
+        const data = await evalJs(ensureWindow(), IM_SCAN_JS)
+        ingest(data)
+        target = data.conversations?.find(c => c.peer_sec_uid === member.sec_uid)
+        if (target) break
+        if (n === 15) ensureWindow().reload()
+      }
+      if (!target) return { ok: false, msg: '未同步到目标私聊，请在抖音窗口检查私信权限' }
+      profile.hide()
+    }
+    const selected = await selectConversation(target.id)
+    if (!selected.ok) return selected
+    const limited = await evalJs(ensureWindow(), `() => /只能发送一条文字消息/.test(document.querySelector('.messageMessageListlist')?.innerText || '')`)
+    live.broadcast({ type: 'dm_selected', conv_id: target.id })
+    return { ok: true, chatting: true, active_id: target.id, limited }
+  })
+}
+
+export function select(convId) {
+  return withWindow(() => selectConversation(convId))
+}
+
+export async function mediaMessage(key) {
+  let message = db.dmGetMsg(key)
+  if (!message || !['video', 'image', 'note'].includes(message.kind)) throw new Error('媒体消息不存在')
+  if (message.aweme_id || message.images?.length || /^https?:\/\//.test(message.media_url || '')) return message
+  let media = db.dmFindMedia(message)
+  if (!media) {
+    media = await withWindow(async () => {
+      const selected = await selectConversation(message.conv_id)
+      if (!selected.ok) throw new Error(selected.msg)
+      const found = await evalJs(ensureWindow(), IM_FIND_MEDIA_JS, message)
+      if (!found) throw new Error('尚未在原会话找到这条历史消息，请点击“在抖音打开”加载历史后重试')
+      ingest(found.data)
+      return found.media
+    })
+  }
+  message = db.dmGetMsg(key) || message
+  const updated = { ...message, kind: media.kind, text: media.text, author: media.author || '',
+    aweme_id: media.aweme_id || '', video_url: media.video_url || '', media_url: media.media_url || '', images: media.images || [] }
+  const saved = db.dmSaveMsg(updated)
+  if (saved) live.broadcast({ type: 'dm_msg_update', old_key: message.key, msg: updated })
+  return updated
+}
+
+export function imageData(message) {
+  return withWindow(async () => {
+    const selected = await selectConversation(message.conv_id)
+    if (!selected.ok) throw new Error(selected.msg)
+    const found = await evalJs(ensureWindow(), IM_FIND_MEDIA_JS, message, true)
+    if (!found?.inline) throw new Error('没有找到原图片，请在抖音打开原消息后重试')
+    ingest(found.data)
+    return found.inline
+  })
+}
+
+export async function openMedia(key) {
+  let message
+  try { message = await mediaMessage(key) } catch { message = db.dmGetMsg(key) }
+  return withWindow(async () => {
+    if (!message) return { ok: false, msg: '媒体消息不存在' }
+    if (/^\d+$/.test(message.aweme_id || '')) {
+      const player = new BrowserWindow({
+        width: 1100, height: 800,
+        webPreferences: { partition: PARTITION, contextIsolation: true, nodeIntegration: false, sandbox: true },
+      })
+      wireChild(player)
+      player.loadURL('https://www.douyin.com/' + (message.kind === 'note' ? 'note/' : 'video/') + message.aweme_id).catch(() => {})
+      return { ok: true }
+    }
+    const selected = await selectConversation(message.conv_id)
+    if (!selected.ok) return selected
+    if (!message.source_id) {
+      ensureWindow().show()
+      return { ok: true }
+    }
+    const opened = await evalJs(ensureWindow(), IM_OPEN_MEDIA_JS, message.source_id)
+    if (opened.ok) ensureWindow().show()
+    return opened
+  })
+}
+
+async function selectConversation(convId) {
   if (!started) return { ok: false, msg: '私信还没启动' }
-  const beforeIds = new Set(CHILDREN.filter((w) => !w.isDestroyed()).map((w) => w.id))
-  const r = await evalJs(ensureWindow(), IM_MEMBER_DM_JS, Number(idx) || 0)
-  if (!r || !r.ok) return r || { ok: false, msg: '点击成员失败' }
-
-  const child = await waitNewChild(beforeIds)
-  if (!child) return { ok: false, msg: '没能打开成员主页' }
-  const st = await startChatInChild(child)
-  try {
-    child.show()
-    child.focus()
-  } catch {
-    /* 窗口可能已关闭 */
-  }
-  const chatting = !!(st && st.hasChat)
-  return {
-    ok: true,
-    name: r.name,
-    chatting,
-    limited: !!(st && st.limited),
-    needFollow: !!(st && st.needFollow),
-    followText: (st && st.followText) || '',
-    msg: chatting ? '' : '已打开成员主页，请在窗口里点「私信」',
-  }
-}
-
-// 对当前打开的子窗口点「关注」
-export async function followMember() {
-  const alive = CHILDREN.filter((w) => !w.isDestroyed())
-  const child = alive[alive.length - 1]
-  if (!child) return { ok: false, msg: '没有打开的成员窗口' }
-  const r = await evalJs(
-    child,
-    `() => {
-      const b = [...document.querySelectorAll('button')]
-        .find(x => /^(关注|已关注|相互关注|互相关注)$/.test((x.innerText || '').trim()));
-      if (!b) return { ok: false, msg: '没找到关注按钮' };
-      const rect = b.getBoundingClientRect();
-      return { ok: true, text: (b.innerText || '').trim(), x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2), w: Math.round(rect.width) };
-    }`,
-  ).catch(() => null)
-  if (!r || !r.ok) return r || { ok: false, msg: '读取关注按钮失败' }
-  if (r.w > 0) {
-    child.showInactive()
-    child.webContents.sendInputEvent({ type: 'mouseMove', x: r.x, y: r.y })
-    child.webContents.sendInputEvent({ type: 'mouseDown', x: r.x, y: r.y, button: 'left', clickCount: 1 })
-    child.webContents.sendInputEvent({ type: 'mouseUp', x: r.x, y: r.y, button: 'left', clickCount: 1 })
-  }
-  await sleep(1500)
-  const after = await evalJs(child, CHILD_CHAT_STATE).catch(() => null)
-  return { ok: true, before: r.text, after: (after && after.followText) || '' }
-}
-
-// 打开指定会话并同步一次消息
-export async function select(convId) {
-  if (!started) return { ok: false, msg: '私信还没启动' }
-  if (!IDX.has(convId)) {
-    try {
-      ingest(await evalJs(ensureWindow(), IM_SCAN_JS))
-    } catch {
-      /* 下面会给出失败原因 */
+  if (!convId) return { ok: false, msg: '缺少会话 ID' }
+  const w = ensureWindow()
+  const opened = await evalJs(w, IM_OPEN_JS, convId)
+  if (!opened?.ok) return opened || { ok: false, msg: '打开会话失败' }
+  for (let n = 0; n < 20; n++) {
+    await sleep(150)
+    const data = await evalJs(w, IM_SCAN_JS)
+    if (data.active_id === convId) {
+      ingest(data)
+      return { ok: true, active_id: convId }
     }
   }
-  const idx = IDX.get(convId)
-  if (idx === undefined) return { ok: false, msg: '会话不在当前列表里，请先同步' }
-  const r = await evalJs(ensureWindow(), IM_OPEN_JS, idx)
-  if (!r || !r.ok) return { ok: false, msg: (r && r.msg) || '打开会话失败' }
-  await sleep(800)
-  try {
-    ingest(await evalJs(ensureWindow(), IM_SCAN_JS))
-  } catch {
-    /* 打不开也先返回成功，下一轮轮询会补上 */
-  }
-  return { ok: true, active_id: DM.active_id }
+  return { ok: false, msg: '尚未切换到目标会话，请重试' }
 }
 
 function schedule() {
@@ -368,7 +427,7 @@ function schedule() {
 
 async function tick() {
   if (!started) return
-  if (scanning || DM.sending) {
+  if (scanning || working || DM.sending) {
     schedule()
     return
   }
@@ -405,12 +464,12 @@ function ingest(data) {
   const convs = data.conversations || []
 
   convs.forEach((c) => {
-    IDX.set(c.id, c.idx)
+    db.dmMigrateConv(c.legacy_id, c.id)
     const prev = CONV.get(c.id)
-    CONV.set(c.id, c)
     const changed = !prev || prev.name !== c.name || prev.avatar !== c.avatar || prev.preview !== c.preview
     // 列表本身按最新排序；首次扫描按下标递减，既保留顺序又不伪造真实时间
     const lastTs = changed ? now - c.idx * 0.001 : prev.last_ts || now
+    CONV.set(c.id, { ...c, last_ts: lastTs })
     db.dmUpsertConv({
       id: c.id,
       name: c.name,
@@ -419,18 +478,23 @@ function ingest(data) {
       last_ts: lastTs,
       last_time: c.time_text,
       unread: c.unread,
+      is_group: c.is_group,
+      peer_sec_uid: c.peer_sec_uid,
     })
     if (changed) {
       live.broadcast({
         type: 'dm_conv',
         conv: {
           id: c.id,
+          legacy_id: c.legacy_id,
           name: c.name,
           avatar: c.avatar,
           preview: c.preview,
           last_ts: lastTs,
           last_time: c.time_text,
           unread: c.unread,
+          is_group: c.is_group,
+          peer_sec_uid: c.peer_sec_uid,
         },
       })
     }
@@ -439,37 +503,26 @@ function ingest(data) {
   DM.conv_count = convs.length
   DM.unread = convs.reduce((n, c) => n + (c.unread || 0), 0)
 
-  // 清掉已不存在/换了 id 的旧会话（最多每 60s 一次，避免列表抖动时误删）
-  if (data.diag && data.diag.exact && convs.length && Date.now() - lastPrune > 60000) {
-    lastPrune = Date.now()
-    const keep = new Set(convs.map((c) => c.id))
-    const removed = db.dmPruneConvs([...keep])
-    if (removed) {
-      for (const id of [...CONV.keys()]) if (!keep.has(id)) CONV.delete(id)
-      for (const id of [...PREV.keys()]) if (!keep.has(id)) PREV.delete(id)
-      for (const id of [...IDX.keys()]) if (!keep.has(id)) IDX.delete(id)
-    }
-  }
-
   DM.active_id = data.active_id || DM.active_id
 
   const activeId = data.active_id || ''
   if (activeId) {
     const msgs = data.messages || []
-    for (const m of pickNew(activeId, msgs)) {
-      const key = `${activeId}:${m.key}`
+    const fallback = new Set(pickNew(activeId, msgs).map(m => m.key))
+    for (const m of msgs) {
+      if (!m.source_id && !fallback.has(m.key)) continue
+      const ts = m.ts || now
       const row = {
-        key,
-        conv_id: activeId,
-        direction: m.direction,
-        kind: m.kind || 'text',
-        text: m.text,
-        thumb: m.thumb || '',
-        author: m.author || '',
-        ts: now,
-        time: stamp(),
+        key: `${activeId}:${m.key}`, conv_id: activeId, direction: m.direction,
+        kind: m.kind || 'text', text: m.text, thumb: m.thumb || '', author: m.author || '',
+        source_id: m.source_id || '', sender_id: m.sender_id || '',
+        sender_name: m.sender_name || (m.direction === 'out' ? '我' : ''),
+        sender_avatar: m.sender_avatar || '', sender_sec_uid: m.sender_sec_uid || '',
+        aweme_id: m.aweme_id || '', video_url: m.video_url || '', media_url: m.media_url || '', images: m.images || [],
+        ts, time: new Date(ts * 1000).toLocaleString('zh-CN', { hour12: false }),
       }
-      if (db.dmInsertMsg(row)) live.broadcast({ type: 'dm_msg', conv_id: activeId, msg: row })
+      const saved = db.dmSaveMsg(row, m.legacy_key || '')
+      if (saved) live.broadcast({ type: saved.inserted ? 'dm_msg' : 'dm_msg_update', old_key: saved.old_key, conv_id: activeId, msg: row })
     }
   }
 
@@ -508,7 +561,7 @@ export async function draft(convId) {
   if (!conf.has_key) return { ok: false, msg: '还没配置模型 Key，请先到「设置」里填写' }
 
   const rows = db.dmListMsgs(convId, 14)
-  const history = rows.map((m) => `${m.direction === 'in' ? '对方' : '我'}：${m.text}`).join('\n')
+  const history = rows.map((m) => `${m.direction === 'out' ? '我' : m.sender_name || '对方'}：${m.text}`).join('\n')
   const user = `对方昵称：${conv.name || ''}\n最近对话：\n${history || '（暂无）'}\n\n请只输出一条可直接发送的回复正文。`
 
   try {
@@ -528,7 +581,15 @@ export async function draft(convId) {
 }
 
 // 选择本地图片/视频，通过 CDP 塞进私信页的文件输入框，由页面原生上传
-export async function attachFiles() {
+export function attachFiles(convId) {
+  return withWindow(async () => {
+    const selected = await selectConversation(convId)
+    if (!selected.ok) return selected
+    return attachToConversation()
+  })
+}
+
+async function attachToConversation() {
   if (!started) return { ok: false, msg: '私信还没启动' }
   const w = ensureWindow()
   const picked = await dialog.showOpenDialog({
@@ -567,32 +628,23 @@ export async function attachFiles() {
 }
 
 // 串行发送：一个窗口同一时刻只能在一个会话里输入
-export async function send(convId, text) {
+export function send(convId, text) {
+  return withWindow(() => sendMessage(convId, text))
+}
+
+async function sendMessage(convId, text) {
   const body = String(text || '').trim()
   if (!body) return { ok: false, msg: '内容不能为空' }
   if (DM.sending) return { ok: false, msg: '正在发送上一条，请稍等' }
   if (!started) return { ok: false, msg: '私信还没启动' }
   if (!convId) return { ok: false, msg: '缺少会话 id' }
 
-  // 会话下标只在内存里，应用重启后需要先扫一次
-  if (!IDX.has(convId)) {
-    try {
-      ingest(await evalJs(ensureWindow(), IM_SCAN_JS))
-    } catch {
-      /* 扫描失败时下面的下标检查会给出提示 */
-    }
-  }
-
   DM.sending = true
   sendStat(true)
   try {
-    const idx = IDX.get(convId)
-    if (idx === undefined) return { ok: false, msg: '会话不在当前列表里，请先刷一次私信' }
-
+    const opened = await selectConversation(convId)
+    if (!opened.ok) return opened
     const w = ensureWindow()
-    const opened = await evalJs(w, IM_OPEN_JS, idx)
-    if (!opened || !opened.ok) return { ok: false, msg: (opened && opened.msg) || '打开会话失败' }
-    await sleep(700)
 
     const res = await evalJs(w, IM_SEND_JS, body)
     if (!res || !res.ok) return { ok: false, msg: (res && res.msg) || '发送失败，可在私信窗口手动发送' }
@@ -642,4 +694,6 @@ export function shutdown() {
   timer = null
   if (win && !win.isDestroyed()) win.destroy()
   win = null
+  for (const child of CHILDREN) if (!child.isDestroyed()) child.destroy()
+  PROFILES.clear()
 }

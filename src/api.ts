@@ -1,4 +1,4 @@
-import type { AiCard, DmConv, DmMsg, DmGroup, DmStat, MsgItem, Stat } from './types'
+import type { AiCard, DmConv, DmMsg, DmGroup, DmMedia, DmStat, MsgItem, Stat } from './types'
 
 async function req<T>(path: string, init?: RequestInit): Promise<T | null> {
   try {
@@ -77,20 +77,24 @@ export const api = {
     req<{ ok: boolean; text?: string; msg?: string }>('/dm/draft', post({ conv_id })),
   dmSend: (conv_id: string, text: string) =>
     req<{ ok: boolean; msg?: string }>('/dm/send', post({ conv_id, text })),
-  dmAttach: () =>
-    req<{ ok: boolean; count?: number; canceled?: boolean; msg?: string }>('/dm/attach', post()),
+  dmAttach: (conv_id: string) =>
+    req<{ ok: boolean; count?: number; canceled?: boolean; msg?: string }>('/dm/attach', post({ conv_id })),
   dmGroup: (conv_id: string) => req<DmGroup>('/dm/group', post({ conv_id })),
-  dmMember: (idx: number) =>
+  dmMember: (conv_id: string, member_id: string) =>
     req<{
       ok: boolean
       name?: string
       chatting?: boolean
+      active_id?: string
       limited?: boolean
       needFollow?: boolean
       followText?: string
       msg?: string
-    }>('/dm/member', post({ idx })),
-  dmFollow: () => req<{ ok: boolean; before?: string; after?: string; msg?: string }>('/dm/member-follow', post()),
+    }>('/dm/member', post({ conv_id, member_id })),
+  dmFollow: (conv_id: string, member_id: string) =>
+    req<{ ok: boolean; already?: boolean; after?: string; msg?: string }>('/dm/member-follow', post({ conv_id, member_id })),
+  dmMedia: (key: string, refresh = false) => req<DmMedia>('/dm/media/resolve', post({ key, refresh })),
+  dmMediaOpen: (key: string) => req<{ ok: boolean; msg?: string }>('/dm/media/open', post({ key })),
   dmAgent: () => req<{ system_prompt: string; temperature: number }>('/dm/agent'),
   dmSaveAgent: (c: { system_prompt: string; temperature: number }) =>
     req<{ ok: boolean; msg?: string }>('/dm/agent', post(c)),

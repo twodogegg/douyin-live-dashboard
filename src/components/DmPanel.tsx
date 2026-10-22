@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { api } from '../api'
 import { useDmStream } from '../hooks/useDmStream'
-import type { DmGroup, DmMsg } from '../types'
+import type { DmGroup, DmGroupMember, DmMedia, DmMsg } from '../types'
 
 function ConvAvatar({ name, url }: { name: string; url: string | null }) {
   return (
@@ -33,37 +33,109 @@ function LinkText({ text }: { text: string }) {
   )
 }
 
-function MsgContent({ m }: { m: DmMsg }) {
+function MsgContent({ m, onMedia }: { m: DmMsg; onMedia: (m: DmMsg) => void }) {
   if (m.kind === 'image') {
-    return m.thumb ? (
-      <a className="dm-media" href={m.thumb} target="_blank" rel="noreferrer">
-        <img src={m.thumb} alt="" referrerPolicy="no-referrer" />
-      </a>
-    ) : (
-      <div className="dm-media-missing">[图片]</div>
-    )
-  }
-  if (m.kind === 'video') {
     return (
-      <button className="dm-video" onClick={() => api.dmOpen()} title="在抖音私信窗口里查看视频">
-        {m.thumb ? <img src={m.thumb} alt="" referrerPolicy="no-referrer" /> : <div className="dm-media-missing">视频</div>}
-        <span className="dm-video-play">▶</span>
-        <span className="dm-video-author">{m.author || '分享视频'}</span>
+      <button className="dm-media" onClick={() => onMedia(m)} title="查看原图">
+        <img src={'/dm/media/' + encodeURIComponent(m.key) + '?image=0'} alt="图片" loading="lazy" />
       </button>
     )
   }
-  if (m.kind === 'unsupported') {
-    return <div className="dm-text dim">{m.text}</div>
+  if (m.kind === 'video' || m.kind === 'note') {
+    return (
+      <>
+        <button className="dm-video" onClick={() => onMedia(m)} title={m.kind === 'note' ? '查看图文' : '播放视频'}>
+          {m.thumb ? <img src={m.thumb} alt="" referrerPolicy="no-referrer" /> : <div className="dm-media-missing">{m.kind === 'note' ? '图文' : '视频'}</div>}
+          {m.kind === 'video' && <span className="dm-video-play">▶</span>}
+          <span className="dm-video-author">{m.kind === 'note' ? '图文 · ' : ''}{m.author || '分享作品'}</span>
+        </button>
+        {m.kind === 'note' && <div className="dm-caption"><LinkText text={m.text} /></div>}
+      </>
+    )
   }
+  if (m.kind === 'unsupported') return <div className="dm-text dim">{m.text}</div>
+  return <div className="dm-text"><LinkText text={m.text} /></div>
+}
+
+function MediaDialog({ message, onClose }: { message: DmMsg; onClose: () => void }) {
+  const [media, setMedia] = useState<DmMedia | null>(null)
+  const [error, setError] = useState('')
+  const [attempt, setAttempt] = useState(0)
+  const [loading, setLoading] = useState(true)
+  const [index, setIndex] = useState(0)
+  const [zoom, setZoom] = useState(false)
+  const images = media?.images || []
+  const kind = media?.kind || message.kind
+  const title = kind === 'note' ? '图文预览' : kind === 'image' ? '图片预览' : '视频播放'
+
+  useEffect(() => {
+    let alive = true
+    setLoading(true)
+    setMedia(null)
+    setIndex(0)
+    setZoom(false)
+    setError('')
+    api.dmMedia(message.key, attempt > 0).then(r => {
+      if (!alive) return
+      setLoading(false)
+      if (r?.ok) setMedia(r)
+      else setError(r?.msg || '媒体解析失败，请重试')
+    })
+    return () => { alive = false }
+  }, [message.key, attempt])
+
+  useEffect(() => {
+    const keydown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose()
+      if (images.length > 1 && e.key === 'ArrowLeft') setIndex(i => Math.max(0, i - 1))
+      if (images.length > 1 && e.key === 'ArrowRight') setIndex(i => Math.min(images.length - 1, i + 1))
+    }
+    document.addEventListener('keydown', keydown)
+    return () => document.removeEventListener('keydown', keydown)
+  }, [onClose, images.length])
+
+  useEffect(() => { setZoom(false); setError('') }, [index])
+
   return (
-    <div className="dm-text">
-      <LinkText text={m.text} />
+    <div className="overlay" onClick={onClose}>
+      <div className="dlg dm-player" onClick={e => e.stopPropagation()} role="dialog" aria-label="媒体预览">
+        <h3>{title}</h3>
+        {loading && <div className="dm-empty">正在加载媒体…</div>}
+        {media?.url && <video src={media.url} poster={message.thumb} controls autoPlay onError={() => setError('视频播放失败，请重试或查看抖音原作品')} />}
+        {!!images.length && (
+          <>
+            <div className="dm-image-view">
+              <button className={zoom ? 'dm-image-zoom' : ''} onClick={() => setZoom(v => !v)} title={zoom ? '适应窗口' : '放大图片'}>
+                <img src={images[index]} alt={`第 ${index + 1} 张图片`} onError={() => setError('图片加载失败，请重试刷新原图地址')} />
+              </button>
+            </div>
+            {images.length > 1 && <div className="dm-image-nav">
+              <button disabled={index === 0} onClick={() => setIndex(i => i - 1)}>上一张</button>
+              <span>{index + 1} / {images.length}</span>
+              <button disabled={index === images.length - 1} onClick={() => setIndex(i => i + 1)}>下一张</button>
+            </div>}
+          </>
+        )}
+        {kind === 'note' && media && <div className="dm-note-body">
+          {media.author && <div className="note">{media.author}</div>}
+          <LinkText text={media.text || ''} />
+        </div>}
+        {error && <div className="note bad">{error}</div>}
+        <div className="row">
+          <button onClick={async () => {
+            const r = await api.dmMediaOpen(message.key)
+            if (!r?.ok) setError(r?.msg || '打开抖音原消息失败')
+          }}>在抖音打开</button>
+          {error && <button onClick={() => setAttempt(n => n + 1)}>重试</button>}
+          <button onClick={onClose}>关闭</button>
+        </div>
+      </div>
     </div>
   )
 }
 
 export function DmPanel() {
-  const { stat, convs, activeId, msgs, wsDown, openConv, refreshConvs } = useDmStream()
+  const { stat, convs, activeId, msgs, wsDown, selecting, selectionError, openConv, activateConv, refreshConvs } = useDmStream()
   const [text, setText] = useState('')
   const [busy, setBusy] = useState<'' | 'boot' | 'draft' | 'send' | 'sync' | 'attach' | 'group' | 'member'>('')
   const [note, setNote] = useState('')
@@ -71,11 +143,12 @@ export function DmPanel() {
   const [group, setGroup] = useState<DmGroup | null>(null)
   const [groupOpen, setGroupOpen] = useState(false)
   const [memberNote, setMemberNote] = useState('')
-  const [followTarget, setFollowTarget] = useState('')
+  const [memberSearch, setMemberSearch] = useState('')
+  const [media, setMedia] = useState<DmMsg | null>(null)
   const feedRef = useRef<HTMLDivElement>(null)
 
   const active = convs.find((c) => c.id === activeId)
-  const canSend = stat.running && !!activeId && text.trim().length > 0 && !busy
+  const canSend = stat.running && stat.active_id === activeId && !!activeId && text.trim().length > 0 && !busy && !selecting
 
   const say = (msg: string, bad = false) => {
     setNote(msg)
@@ -86,6 +159,16 @@ export function DmPanel() {
     const el = feedRef.current
     if (el) el.scrollTop = el.scrollHeight
   }, [msgs])
+
+  useEffect(() => {
+    setText('')
+    setGroup(null)
+    setGroupOpen(false)
+    setMemberSearch('')
+    setMemberNote('')
+    setNote('')
+    setMedia(null)
+  }, [activeId])
 
   const start = async () => {
     setBusy('boot')
@@ -148,7 +231,7 @@ export function DmPanel() {
     if (!activeId) return
     setBusy('attach')
     say('选择要发送的文件…')
-    const r = await api.dmAttach()
+    const r = await api.dmAttach(activeId)
     setBusy('')
     if (r && r.ok) say(`已选择 ${r.count} 个文件，正在上传`)
     else if (r && r.canceled) say('')
@@ -164,45 +247,38 @@ export function DmPanel() {
       say((r && r.msg) || '读取群信息失败', true)
       return
     }
-    setGroup(r)
+    setGroup({ ...r, conv_id: activeId })
     setMemberNote('')
     setGroupOpen(true)
   }
 
-  const chatMember = async (name: string, idx: number) => {
+  const chatMember = async (member: DmGroupMember) => {
+    if (!group?.conv_id) return
     setBusy('member')
-    setMemberNote(`正在打开与 ${name} 的私聊…`)
-    setFollowTarget('')
-    const r = await api.dmMember(idx)
+    setMemberNote(`正在打开与 ${member.name} 的私聊…`)
+    const r = await api.dmMember(group.conv_id, member.id)
     setBusy('')
-    if (!r || !r.ok) {
-      setMemberNote((r && r.msg) || '打开失败')
+    if (!r?.ok) {
+      setMemberNote(r?.msg || '打开失败')
       return
     }
-    if (r.followText === '关注') setFollowTarget(name)
-    if (r.chatting) {
-      setMemberNote(
-        r.limited
-          ? `已打开与 ${name} 的私聊窗口。对方回复或关注你之前，只能发送一条文字消息。`
-          : `已打开与 ${name} 的私聊窗口`,
-      )
-    } else if (r.needFollow) {
-      setMemberNote(`需要先关注 ${name} 才能私聊，可点下方「关注对方」后再试`)
-    } else {
-      setMemberNote(r.msg || '已打开成员主页，请在窗口里点「私信」')
-    }
+    if (r.active_id) activateConv(r.active_id)
+    setGroupOpen(false)
+    say(`已打开与 ${member.name} 的私聊${r.limited ? '，对方回复或关注前只能发送一条文字消息' : ''}`)
+    await refreshConvs()
   }
 
-  const follow = async () => {
+  const follow = async (member: DmGroupMember) => {
+    if (!group?.conv_id) return
     setBusy('member')
-    setMemberNote('正在关注…')
-    const r = await api.dmFollow()
+    setMemberNote(`正在关注 ${member.name}…`)
+    const r = await api.dmFollow(group.conv_id, member.id)
     setBusy('')
-    if (r && r.ok) {
-      setMemberNote(`已关注${followTarget ? ` ${followTarget}` : ''}（${r.after || '已关注'}），可再点「私聊」`)
-      setFollowTarget('')
+    if (r?.ok) {
+      setMemberNote(`${member.name}：${r.after || '已关注'}`)
+      setGroup(prev => prev && ({ ...prev, members: prev.members.map(m => m.id === member.id ? { ...m, followed: true } : m) }))
     } else {
-      setMemberNote((r && r.msg) || '关注失败')
+      setMemberNote(r?.msg || '关注失败')
     }
   }
 
@@ -243,6 +319,7 @@ export function DmPanel() {
               key={c.id}
               className={`dm-item${c.id === activeId ? ' on' : ''}`}
               onClick={() => openConv(c.id)}
+              disabled={!!busy}
             >
               <ConvAvatar name={c.name} url={c.avatar} />
               <span className="dm-item-body">
@@ -261,11 +338,11 @@ export function DmPanel() {
       <section className="dm-thread">
         <h2>
           {active ? active.name : '选择一个会话'}
-          {activeId && (
+          {activeId && !!active?.is_group && (
             <button
               className="pill dm-head-btn"
               onClick={loadGroup}
-              disabled={!stat.running || busy === 'group'}
+              disabled={!stat.running || !!busy || selecting}
             >
               {busy === 'group' ? '读取中…' : '群信息'}
             </button>
@@ -277,10 +354,15 @@ export function DmPanel() {
           {!activeId && (
             <div className="dm-empty">左侧选一个会话，或先点「开启私信」同步会话列表。</div>
           )}
+          {selecting && <div className="note">正在切换会话…</div>}
           {msgs.map((m) => (
             <div key={m.key} className={`dm-msg ${m.direction}`}>
               <div className={`dm-bubble${m.kind && m.kind !== 'text' ? ' media' : ''}`}>
-                <MsgContent m={m} />
+                <div className="dm-sender">
+                  <ConvAvatar name={m.direction === 'out' ? '我' : m.sender_name || active?.name || '?'} url={m.sender_avatar || null} />
+                  <span>{m.direction === 'out' ? '我' : m.sender_name || (active?.is_group ? '未记录发送者' : active?.name || '对方')}</span>
+                </div>
+                <MsgContent m={m} onMedia={setMedia} />
                 <div className="dm-stamp">{m.time}</div>
               </div>
             </div>
@@ -292,24 +374,24 @@ export function DmPanel() {
             value={text}
             onChange={(e) => setText(e.target.value)}
             placeholder={activeId ? '输入回复，或点「生成草稿」' : '先选择一个会话'}
-            disabled={!stat.running || !activeId}
+            disabled={!stat.running || !activeId || selecting || stat.active_id !== activeId}
             rows={3}
             onKeyDown={(e) => {
               if ((e.metaKey || e.ctrlKey) && e.key === 'Enter' && canSend) send()
             }}
           />
           <div className="dm-actions">
-            <span className={`dm-note${noteBad ? ' bad' : ''}`}>{note}</span>
+            <span className={`dm-note${noteBad ? ' bad' : ''}`}>{selectionError || note}</span>
             <button
               onClick={attach}
-              disabled={!stat.running || !activeId || busy !== ''}
+              disabled={!stat.running || !activeId || !!busy || selecting}
               title="发送图片或视频"
             >
               {busy === 'attach' ? '选择中…' : '📎 文件'}
             </button>
             <button
               onClick={draft}
-              disabled={!stat.running || !activeId || busy === 'draft' || busy === 'send'}
+              disabled={!stat.running || !activeId || !!busy || selecting}
             >
               {busy === 'draft' ? '生成中…' : '生成草稿'}
             </button>
@@ -321,6 +403,8 @@ export function DmPanel() {
       </section>
       </main>
 
+      {media && <MediaDialog message={media} onClose={() => setMedia(null)} />}
+
       {groupOpen && group && (
         <div className="overlay" onClick={() => setGroupOpen(false)}>
           <div className="dlg dm-group" onClick={(e) => e.stopPropagation()}>
@@ -329,12 +413,23 @@ export function DmPanel() {
               <span className="hint">{group.count || ''}</span>
             </h3>
             {!group.group && <div className="note">这个会话不是群聊。</div>}
+            {group.group && (
+              <>
+                <div className="note">已读取 {group.members.length} 人{group.complete === false ? `，共 ${group.total || '?'} 人，部分成员尚未加载` : ''}</div>
+                <input className="dm-member-search" aria-label="搜索群成员" placeholder="搜索群成员" value={memberSearch} onChange={e => setMemberSearch(e.target.value)} />
+              </>
+            )}
             <div className="dm-member-list">
-              {group.members.map((m) => (
-                <div className="dm-member" key={m.idx}>
+              {group.members.filter(m => m.name.toLowerCase().includes(memberSearch.trim().toLowerCase())).map((m) => (
+                <div className="dm-member" key={m.id}>
                   <ConvAvatar name={m.name} url={m.avatar || null} />
                   <span className="dm-member-name">{m.name || '成员'}</span>
-                  <button onClick={() => chatMember(m.name, m.idx)} disabled={busy === 'member'}>
+                  {m.role === 1 && <span className="tag">群主</span>}
+                  {m.role === 2 && <span className="tag">管理员</span>}
+                  <button onClick={() => follow(m)} disabled={!!busy || m.followed}>
+                    {m.followed ? '已关注' : '关注'}
+                  </button>
+                  <button onClick={() => chatMember(m)} disabled={!!busy}>
                     私聊
                   </button>
                 </div>
@@ -343,11 +438,6 @@ export function DmPanel() {
             </div>
             <div className="row">
               <span className="note">{memberNote}</span>
-              {followTarget && (
-                <button onClick={follow} disabled={busy === 'member'}>
-                  关注对方
-                </button>
-              )}
               <button onClick={() => setGroupOpen(false)}>关闭</button>
             </div>
           </div>

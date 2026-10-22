@@ -32,30 +32,55 @@ export type AiCard = {
 // ---------- 私信 ----------
 export type DmConv = {
   id: string
+  legacy_id?: string
   name: string
   avatar: string | null
   preview: string
   last_ts: number
   last_time?: string
   unread: number
+  is_group?: boolean | number
+  peer_sec_uid?: string
 }
 
 export type DmMsg = {
   key: string
   conv_id: string
   direction: 'in' | 'out'
-  kind?: 'text' | 'image' | 'video' | 'unsupported'
+  kind?: 'text' | 'image' | 'video' | 'note' | 'unsupported'
   text: string
   thumb?: string
   author?: string
+  source_id?: string
+  sender_id?: string
+  sender_name?: string
+  sender_avatar?: string
+  sender_sec_uid?: string
+  aweme_id?: string
+  video_url?: string
+  media_url?: string
+  images?: string[]
   ts: number
   time: string
 }
 
+export type DmMedia = {
+  ok: boolean
+  kind?: 'video' | 'image' | 'note'
+  url?: string
+  images?: string[]
+  text?: string
+  author?: string
+  msg?: string
+}
+
 export type DmGroupMember = {
-  idx: number
+  id: string
+  sec_uid: string
   name: string
   avatar: string
+  role?: number
+  followed?: boolean
 }
 
 export type DmGroup = {
@@ -64,6 +89,9 @@ export type DmGroup = {
   name?: string
   count?: string
   members: DmGroupMember[]
+  conv_id?: string
+  total?: number
+  complete?: boolean
   msg?: string
 }
 
