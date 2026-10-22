@@ -597,21 +597,19 @@ export async function send(convId, text) {
     const res = await evalJs(w, IM_SEND_JS, body)
     if (!res || !res.ok) return { ok: false, msg: (res && res.msg) || '发送失败，可在私信窗口手动发送' }
 
-    const row = {
-      key: `${convId}:out:${Date.now()}`,
-      conv_id: convId,
-      direction: 'out',
-      text: body,
-      ts: Date.now() / 1000,
-      time: stamp(),
+    // 发送成功后直接按页面回显入库：用的 key 与轮询扫描完全一致，
+    // 避免「本地造一条 + 扫描再插一条」导致同一条消息入库两次。
+    try {
+      const data = await evalJs(w, IM_SCAN_JS)
+      if (data && data.ok) ingest(data)
+    } catch {
+      /* 扫描失败时下一轮轮询会补上 */
     }
-    db.dmInsertMsg(row)
-    live.broadcast({ type: 'dm_msg', conv_id: convId, msg: row })
     const conv = db.dmGetConv(convId)
     if (conv) {
-      db.dmUpsertConv({ ...conv, preview: body, last_ts: row.ts, last_time: row.time, unread: 0 })
+      db.dmUpsertConv({ ...conv, preview: body, last_ts: Date.now() / 1000, last_time: stamp(), unread: 0 })
     }
-    return { ok: true, msg: row.key }
+    return { ok: true }
   } catch (e) {
     return { ok: false, msg: String((e && e.message) || e).slice(0, 200) }
   } finally {
