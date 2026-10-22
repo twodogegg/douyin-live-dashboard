@@ -28,3 +28,53 @@ export type AiCard = {
   summary?: string
   pending?: boolean
 }
+
+// ---------- 私信 ----------
+export type DmConv = {
+  id: string
+  name: string
+  avatar: string | null
+  preview: string
+  last_ts: number
+  last_time?: string
+  unread: number
+}
+
+export type DmMsg = {
+  key: string
+  conv_id: string
+  direction: 'in' | 'out'
+  kind?: 'text' | 'image' | 'video' | 'unsupported'
+  text: string
+  thumb?: string
+  author?: string
+  ts: number
+  time: string
+}
+
+export type DmGroupMember = {
+  idx: number
+  name: string
+  avatar: string
+}
+
+export type DmGroup = {
+  ok: boolean
+  group: boolean
+  name?: string
+  count?: string
+  members: DmGroupMember[]
+  msg?: string
+}
+
+export type DmStat = {
+  status: string
+  running: boolean
+  url?: string
+  error?: string
+  conv_count: number
+  active_id: string
+  unread: number
+  last_scan: string
+  sending: boolean
+}

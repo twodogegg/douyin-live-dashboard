@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { api } from './api'
 import { AiFeed } from './components/AiFeed'
 import { AccountDialog } from './components/AccountDialog'
+import { DmPanel } from './components/DmPanel'
 import { Header } from './components/Header'
 import { HistoryDialog } from './components/HistoryDialog'
 import { LoginGate } from './components/LoginGate'
@@ -11,6 +12,7 @@ import { useLiveStream } from './hooks/useLiveStream'
 
 export default function App() {
   const { r1, r2, ai, avatars, stat, wsDown } = useLiveStream()
+  const [view, setView] = useState<'live' | 'dm'>('live')
 
   const [loggedIn, setLoggedIn] = useState(false)
   const [roomInput, setRoomInput] = useState('')
@@ -122,29 +124,36 @@ export default function App() {
         onOpenHistory={() => setHistoryOpen(true)}
         onOpenSettings={() => setSettingsOpen(true)}
         onShowLiveWindow={() => api.showLiveWindow()}
+        onShowDmWindow={() => api.dmOpen()}
         onOpenAccount={() => setAccountOpen(true)}
+        view={view}
+        onView={setView}
       />
 
-      <main>
-        <section className="col">
-          <h2>
-            🎤 主播侧<span className="tag">视频区公屏 · 流式上屏</span>
-          </h2>
-          <MessageFeed items={r1} avatars={avatars} fallbackName="主播侧" region="r1" />
-        </section>
-        <section className="col">
-          <h2>
-            🤖 AI 实时摘要<span className="tag">{aiTag}</span>
-          </h2>
-          <AiFeed cards={ai} />
-        </section>
-        <section className="col">
-          <h2>
-            💬 观众侧<span className="tag">聊天室弹幕</span>
-          </h2>
-          <MessageFeed items={r2} avatars={avatars} fallbackName="" region="r2" />
-        </section>
-      </main>
+      {view === 'live' ? (
+        <main>
+          <section className="col">
+            <h2>
+              🎤 主播侧<span className="tag">视频区公屏 · 流式上屏</span>
+            </h2>
+            <MessageFeed items={r1} avatars={avatars} fallbackName="主播侧" region="r1" />
+          </section>
+          <section className="col">
+            <h2>
+              🤖 AI 实时摘要<span className="tag">{aiTag}</span>
+            </h2>
+            <AiFeed cards={ai} />
+          </section>
+          <section className="col">
+            <h2>
+              💬 观众侧<span className="tag">聊天室弹幕</span>
+            </h2>
+            <MessageFeed items={r2} avatars={avatars} fallbackName="" region="r2" />
+          </section>
+        </main>
+      ) : (
+        <DmPanel />
+      )}
 
       {!loggedIn && <LoginGate msg={loginMsg} onStart={startLogin} onDone={finishLogin} />}
       {accountOpen && (

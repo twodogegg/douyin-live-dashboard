@@ -4,6 +4,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import * as db from './db.js'
 import * as live from './live.js'
+import * as im from './im.js'
 import { startServer } from './server.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -62,7 +63,12 @@ if (!app.requestSingleInstanceLock()) {
     await live.init({
       agentPath: path.join(userData, 'agent_config.json'),
       defaultAgentPath: path.join(__dirname, 'default-agent-config.json'),
+      aiConfigPath: path.join(userData, 'ai_config.json'),
       settle: Number(process.env.DY_SETTLE) || 12000,
+    })
+    im.init({
+      dmAgentPath: path.join(userData, 'dm_agent.json'),
+      defaultDmAgentPath: path.join(__dirname, 'default-dm-agent.json'),
     })
 
     server = await startServer({
@@ -80,6 +86,7 @@ if (!app.requestSingleInstanceLock()) {
 app.on('window-all-closed', () => app.quit())
 
 app.on('before-quit', () => {
+  im.shutdown()
   live.shutdown()
   if (server) server.close()
   db.closeDb()

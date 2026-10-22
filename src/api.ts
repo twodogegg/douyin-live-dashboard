@@ -1,4 +1,4 @@
-import type { AiCard, MsgItem, Stat } from './types'
+import type { AiCard, DmConv, DmMsg, DmGroup, DmStat, MsgItem, Stat } from './types'
 
 async function req<T>(path: string, init?: RequestInit): Promise<T | null> {
   try {
@@ -60,6 +60,41 @@ export const api = {
   history: (limit = 60) => req<{ windows: HistoryWindow[] }>(`/history?limit=${limit}`),
   historyWindow: (id: number) => req<{ messages: HistoryMessage[] }>(`/history/${id}`),
   showLiveWindow: () => req<{ ok: boolean; visible?: boolean }>('/window/show', post()),
+
+  // ---- 私信 ----
+  dmStatus: () => req<DmStat>('/dm/status'),
+  dmStart: () => req<DmStat & { ok?: boolean }>('/dm/start', post()),
+  dmStop: () => req<DmStat & { ok?: boolean }>('/dm/stop', post()),
+  dmOpen: () => req<{ ok: boolean }>('/dm/open', post()),
+  dmSync: () => req<DmStat & { ok?: boolean }>('/dm/sync', post()),
+  dmConvs: (limit = 80) =>
+    req<{ conversations: DmConv[] }>(`/dm/conversations?limit=${limit}`),
+  dmSelect: (conv_id: string) =>
+    req<{ ok: boolean; msg?: string; active_id?: string }>('/dm/select', post({ conv_id })),
+  dmMsgs: (convId: string, limit = 200) =>
+    req<{ messages: DmMsg[] }>(`/dm/messages/${encodeURIComponent(convId)}?limit=${limit}`),
+  dmDraft: (conv_id: string) =>
+    req<{ ok: boolean; text?: string; msg?: string }>('/dm/draft', post({ conv_id })),
+  dmSend: (conv_id: string, text: string) =>
+    req<{ ok: boolean; msg?: string }>('/dm/send', post({ conv_id, text })),
+  dmAttach: () =>
+    req<{ ok: boolean; count?: number; canceled?: boolean; msg?: string }>('/dm/attach', post()),
+  dmGroup: (conv_id: string) => req<DmGroup>('/dm/group', post({ conv_id })),
+  dmMember: (idx: number) =>
+    req<{
+      ok: boolean
+      name?: string
+      chatting?: boolean
+      limited?: boolean
+      needFollow?: boolean
+      followText?: string
+      msg?: string
+    }>('/dm/member', post({ idx })),
+  dmFollow: () => req<{ ok: boolean; before?: string; after?: string; msg?: string }>('/dm/member-follow', post()),
+  dmAgent: () => req<{ system_prompt: string; temperature: number }>('/dm/agent'),
+  dmSaveAgent: (c: { system_prompt: string; temperature: number }) =>
+    req<{ ok: boolean; msg?: string }>('/dm/agent', post(c)),
+  dmDump: () => req<{ url: string; title: string; tree: string }>('/dm/dump'),
 }
 
 export type { AiCard, MsgItem, Stat }

@@ -1,6 +1,7 @@
 // 直播抓取、登录、房间校验、AI 分析与实时广播。
 // 内置 Chromium 同时承担登录窗口与抓取页，登录态由持久分区自动保存。
 import { BrowserWindow, session } from 'electron'
+import fs from 'node:fs'
 import * as db from './db.js'
 import * as agentStore from './agent.js'
 import { EXTRACT_JS, OPEN_LOGIN_JS, FETCH_ROOM_JS, HARVEST_JS, CLOSE_PANEL_JS } from './extract.js'
@@ -29,6 +30,7 @@ const AI_CONF = {
 
 let AGENT_CONF = null
 let agentFile = ''
+let configFile = ''
 let SETTLE = 12000
 
 let liveWin = null
@@ -47,9 +49,11 @@ let PREV_SUMMARY = ''
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 const stamp = () => new Date().toTimeString().slice(0, 8)
 
-export async function init({ agentPath, defaultAgentPath, settle }) {
+export async function init({ agentPath, defaultAgentPath, settle, aiConfigPath }) {
   agentFile = agentPath
+  configFile = aiConfigPath || ''
   AGENT_CONF = agentStore.load(agentPath, defaultAgentPath)
+  loadAiConfig()
   if (settle) SETTLE = settle
   liveSes = session.fromPartition(PARTITION)
   // 抖音是国内服务：固定直连，避免系统代理节点切换导致登录 IP 变化、被判定为新设备
@@ -106,6 +110,41 @@ function sendStat() {
 }
 
 // ---------- 配置 ----------
+// 模型配置也落盘：生产包每次启动端口不同，localStorage 会随 origin 丢失
+function loadAiConfig() {
+  if (!configFile) return
+  try {
+    const c = JSON.parse(fs.readFileSync(configFile, 'utf-8'))
+    if (c.base_url) AI_CONF.base_url = c.base_url
+    if (c.model) AI_CONF.model = c.model
+    if (typeof c.key === 'string') AI_CONF.key = c.key
+    if (c.window) AI_CONF.window = Number(c.window) || AI_CONF.window
+  } catch {
+    /* 还没写过配置 */
+  }
+}
+
+function saveAiConfig() {
+  if (!configFile) return
+  try {
+    fs.writeFileSync(
+      configFile,
+      JSON.stringify(
+        {
+          base_url: AI_CONF.base_url,
+          model: AI_CONF.model,
+          key: AI_CONF.key,
+          window: AI_CONF.window,
+        },
+        null,
+        2,
+      ),
+    )
+  } catch {
+    /* 写盘失败不影响本次运行 */
+  }
+}
+
 export function getConfig() {
   return { base_url: AI_CONF.base_url, model: AI_CONF.model, window: AI_CONF.window, has_key: !!AI_CONF.key }
 }
@@ -115,6 +154,7 @@ export function setConfig(c) {
   if (c.model) AI_CONF.model = c.model
   if (typeof c.key === 'string') AI_CONF.key = c.key
   if (c.window && Number(c.window) >= 5 && Number(c.window) <= 300) AI_CONF.window = Number(c.window)
+  saveAiConfig()
   sendStat()
   return { ok: true, ...getConfig() }
 }
@@ -510,14 +550,14 @@ function stripChangeMarker(summary) {
   return summary.trim()
 }
 
-async function postChat(messages) {
+async function postChat(messages, override = {}) {
   const res = await fetch(`${AI_CONF.base_url.replace(/\/$/, '')}/chat/completions`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${AI_CONF.key}` },
     body: JSON.stringify({
       model: AI_CONF.model,
-      temperature: AGENT_CONF.temperature,
-      max_tokens: AGENT_CONF.max_tokens,
+      temperature: override.temperature ?? AGENT_CONF.temperature,
+      max_tokens: override.max_tokens ?? AGENT_CONF.max_tokens,
       messages,
     }),
     signal: AbortSignal.timeout(120000),
@@ -603,6 +643,17 @@ async function maybeAnalyze(lastFlush) {
   broadcast({ type: 'ai', time, count: n, summary, model: AI_CONF.model })
   sendStat()
   return Date.now()
+}
+
+// 供私信模块复用同一套模型配置
+export function aiConfig() {
+  return { base_url: AI_CONF.base_url, model: AI_CONF.model, has_key: !!AI_CONF.key }
+}
+
+export async function chatComplete(messages, override = {}) {
+  const data = await postChat(messages, override)
+  const choice = data.choices && data.choices[0]
+  return ((choice && choice.message && choice.message.content) || '').trim()
 }
 
 export function shutdown() {

@@ -4,6 +4,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { WebSocketServer } from 'ws'
 import * as live from './live.js'
+import * as im from './im.js'
 import * as db from './db.js'
 
 const MIME = {
@@ -107,6 +108,48 @@ export function startServer({ port = 0, staticDir }) {
 
       if (p === '/window/show' && req.method === 'POST') return json(res, await live.showLiveWindow())
       if (p === '/window/hide' && req.method === 'POST') return json(res, live.hideLiveWindow())
+
+      // ---- 私信 ----
+      if (p === '/dm/status' && req.method === 'GET') return json(res, im.dmStat())
+      if (p === '/dm/start' && req.method === 'POST') return json(res, await im.start())
+      if (p === '/dm/stop' && req.method === 'POST') return json(res, im.stop())
+      if (p === '/dm/open' && req.method === 'POST') return json(res, await im.showWindow())
+      if (p === '/dm/sync' && req.method === 'POST') return json(res, await im.syncOnce())
+      if (p === '/dm/dump' && req.method === 'GET') return json(res, await im.dumpPage())
+      if (p === '/dm/select' && req.method === 'POST') {
+        const body = await readBody(req)
+        return json(res, await im.select(body.conv_id))
+      }
+      if (p === '/dm/group' && req.method === 'POST') {
+        const body = await readBody(req)
+        return json(res, await im.groupInfo(body.conv_id))
+      }
+      if (p === '/dm/member' && req.method === 'POST') {
+        const body = await readBody(req)
+        return json(res, await im.memberChat(body.idx))
+      }
+      if (p === '/dm/member-follow' && req.method === 'POST') return json(res, await im.followMember())
+      if (p === '/dm/attach' && req.method === 'POST') return json(res, await im.attachFiles())
+      if (p === '/dm/agent' && req.method === 'GET') return json(res, im.getAgent())
+      if (p === '/dm/agent' && req.method === 'POST') return json(res, im.setAgent(await readBody(req)))
+
+      if (p === '/dm/conversations' && req.method === 'GET') {
+        const limit = Math.min(Number(url.searchParams.get('limit')) || 80, 300)
+        return json(res, { conversations: db.dmListConvs(limit) })
+      }
+      const dmMsg = p.match(/^\/dm\/messages\/(.+)$/)
+      if (dmMsg && req.method === 'GET') {
+        const limit = Math.min(Number(url.searchParams.get('limit')) || 200, 500)
+        return json(res, { messages: db.dmListMsgs(decodeURIComponent(dmMsg[1]), limit) })
+      }
+      if (p === '/dm/draft' && req.method === 'POST') {
+        const body = await readBody(req)
+        return json(res, await im.draft(body.conv_id))
+      }
+      if (p === '/dm/send' && req.method === 'POST') {
+        const body = await readBody(req)
+        return json(res, await im.send(body.conv_id, body.text))
+      }
 
       if (p === '/history' && req.method === 'GET') {
         const limit = Math.min(Number(url.searchParams.get('limit')) || 60, 500)
