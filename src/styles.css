@@ -127,6 +127,13 @@ main { flex: 1; display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; pa
 .dm-actions { display: flex; align-items: center; gap: 8px; }
 .dm-note { margin-right: auto; font-size: 11px; color: var(--dim); }
 .dm-note.bad { color: var(--accent); }
+.dm-auto-tools { padding: 0 12px 10px; font-size: 11px; color: var(--dim); display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.dm-auto-tools .note { width: 100%; overflow-wrap: anywhere; }
+.dm-filter-list { max-height: 180px; overflow-y: auto; }
+.dm-filter-list .hint { margin-left: auto; color: var(--dim); font-size: 11px; }
+.dm-memory { padding: 10px 14px; border-bottom: 1px solid var(--border); color: var(--dim); font-size: 12px; flex-shrink: 0; max-height: 180px; overflow-y: auto; }
+.dm-memory summary { cursor: pointer; }
+.dm-memory p { white-space: pre-wrap; padding-top: 8px; line-height: 1.7; color: var(--text); }
 
 .dm-bubble.media { padding: 6px; }
 .dm-text a { color: var(--accent2); text-decoration: underline; word-break: break-all; }

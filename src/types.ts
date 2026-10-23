@@ -41,6 +41,7 @@ export type DmConv = {
   unread: number
   is_group?: boolean | number
   peer_sec_uid?: string
+  auto_reply_blocked?: number
 }
 
 export type DmMsg = {
@@ -105,4 +106,23 @@ export type DmStat = {
   unread: number
   last_scan: string
   sending: boolean
+  auto_enabled?: boolean
+  auto_status?: string
+}
+
+export type DmAgent = {
+  system_prompt: string
+  agent_rules: string
+  temperature: number
+  enabled: boolean
+  reply_delay: number
+  reply_interval: number
+  global_interval: number
+}
+
+export type DmMemory = {
+  conv_id: string
+  blocked: number
+  summary: string
+  updated: number
 }

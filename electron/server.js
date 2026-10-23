@@ -153,6 +153,12 @@ export function startServer({ port = 0, staticDir }) {
       }
       if (p === '/dm/agent' && req.method === 'GET') return json(res, im.getAgent())
       if (p === '/dm/agent' && req.method === 'POST') return json(res, im.setAgent(await readBody(req)))
+      if (p === '/dm/block' && req.method === 'POST') {
+        const body = await readBody(req)
+        return json(res, im.setBlocked(body.conv_id, body.blocked))
+      }
+      const dmMemory = p.match(/^\/dm\/memory\/(.+)$/)
+      if (dmMemory && req.method === 'GET') return json(res, db.dmGetMemory(decodeURIComponent(dmMemory[1])))
 
       if (p === '/dm/conversations' && req.method === 'GET') {
         const limit = Math.min(Number(url.searchParams.get('limit')) || 80, 300)

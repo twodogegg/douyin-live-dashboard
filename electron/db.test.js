@@ -78,3 +78,48 @@ test('封面签名变化时补齐旧视频，已有真实消息时清除同一�
   assert.equal(db.dmSaveMsg(video, 'in:newhash:1').old_key, legacy.key)
   assert.equal(db.dmListMsgs('group').length, 1)
 })
+
+test('会话记忆、名单与回复时间独立保存，ID 迁移保留记忆且扫描不覆盖名单', () => {
+  db.initDb(':memory:')
+  db.dmUpsertConv({ id: 'legacy', name: '同名' })
+  db.dmUpsertConv({ id: 'b', name: '同名' })
+  db.dmSaveMemory('legacy', { summary: '喜欢茶', blocked: 1, summary_cursor: 3, last_reply_at: 1000 })
+  db.dmSaveMemory('b', { summary: '喜欢咖啡' })
+  db.dmMigrateConv('legacy', 'a')
+  db.dmUpsertConv({ id: 'a', name: '新名字' })
+  assert.equal(db.dmGetMemory('a').summary, '喜欢茶')
+  assert.equal(db.dmGetMemory('a').last_reply_at, 1000)
+  assert.equal(db.dmGetMemory('b').summary, '喜欢咖啡')
+  assert.equal(db.dmListConvs().find(c => c.id === 'a').auto_reply_blocked, 1)
+  assert.equal(db.dmGetMemory('b').blocked, 0)
+})
+
+test('摘要增量按入库游标读取，后加载的较早历史也不会漏掉', () => {
+  db.initDb(':memory:')
+  db.dmSaveMsg(message({ key: 'new', source_id: 'new', ts: 100 }))
+  const first = db.dmMemoryBatch('group', 0)
+  db.dmSaveMemory('group', { summary_cursor: first.at(-1).seq })
+  db.dmSaveMsg(message({ key: 'old', source_id: 'old', ts: 1 }))
+  db.dmSaveMsg(message({ key: 'other', conv_id: 'other', source_id: 'other' }))
+  assert.deepEqual(db.dmMemoryBatch('group', db.dmGetMemory('group').summary_cursor).map(m => m.key), ['old'])
+  assert.deepEqual(db.dmPendingMemories().map(m => m.conv_id).sort(), ['group', 'other'])
+})
+
+test('重启后保留摘要、过滤名单与频率时间，并恢复未总结的会话', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'douyin-memory-'))
+  const file = path.join(dir, 'data.db')
+  try {
+    db.initDb(file)
+    db.dmSaveMsg(message())
+    db.dmSaveMemory('group', { blocked: 1, summary: '已约定明天联系', last_reply_at: 2000 })
+    db.closeDb()
+    db.initDb(file)
+    assert.equal(db.dmGetMemory('group').summary, '已约定明天联系')
+    assert.equal(db.dmGetMemory('group').blocked, 1)
+    assert.equal(db.dmGetMemory('group').last_reply_at, 2000)
+    assert.deepEqual(db.dmPendingMemories(), [{ conv_id: 'group' }])
+  } finally {
+    db.closeDb()
+    fs.rmSync(dir, { recursive: true })
+  }
+})

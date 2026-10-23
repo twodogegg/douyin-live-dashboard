@@ -99,7 +99,7 @@ export function Header({
         </>
       ) : (
         <>
-          <span className="room">私信工作台 · 草稿模式</span>
+          <span className="room">私信工作台</span>
           <div className="stats" />
         </>
       )}

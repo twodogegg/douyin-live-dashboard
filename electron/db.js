@@ -31,6 +31,10 @@ export function initDb(file) {
   )
   db.exec('CREATE INDEX IF NOT EXISTS idx_dm_msg_conv ON dm_messages(conv_id, ts)')
   db.exec('CREATE TABLE IF NOT EXISTS dm_message_aliases(alias TEXT PRIMARY KEY, message_key TEXT NOT NULL)')
+  db.exec(`CREATE TABLE IF NOT EXISTS dm_memory(
+    conv_id TEXT PRIMARY KEY, blocked INTEGER DEFAULT 0, summary TEXT DEFAULT '',
+    summary_cursor INTEGER DEFAULT 0, updated REAL DEFAULT 0,
+    handled_key TEXT DEFAULT '', last_reply_at REAL DEFAULT 0)`)
   // 补列保留历史；重新采集到的消息会补齐身份与媒体信息。
   const cols = db.prepare('PRAGMA table_info(dm_messages)').all().map((c) => c.name)
   for (const col of ['kind', 'thumb', 'author', 'source_id', 'sender_id', 'sender_name', 'sender_avatar', 'sender_sec_uid', 'aweme_id', 'video_url', 'media_url', 'images']) {
@@ -110,7 +114,7 @@ export function dmGetConv(id) {
 
 export function dmListConvs(limit = 80) {
   return db
-    .prepare('SELECT id, name, avatar, preview, last_ts, last_time, unread, is_group, peer_sec_uid FROM dm_conversations ORDER BY last_ts DESC LIMIT ?')
+    .prepare('SELECT c.*, COALESCE(m.blocked,0) AS auto_reply_blocked FROM dm_conversations c LEFT JOIN dm_memory m ON m.conv_id=c.id ORDER BY c.last_ts DESC LIMIT ?')
     .all(limit)
 }
 
@@ -120,6 +124,17 @@ export function dmMigrateConv(oldId, id) {
     const old = dmGetConv(oldId)
     if (!dmGetConv(id)) dmUpsertConv({ ...old, id })
     db.prepare('UPDATE dm_messages SET conv_id=? WHERE conv_id=?').run(id, oldId)
+    const oldMemory = dmGetMemory(oldId)
+    const current = dmGetMemory(id)
+    dmSaveMemory(id, {
+      blocked: oldMemory.blocked || current.blocked,
+      summary: current.summary || oldMemory.summary,
+      summary_cursor: current.summary ? current.summary_cursor : oldMemory.summary_cursor,
+      updated: current.summary ? current.updated : oldMemory.updated,
+      handled_key: current.last_reply_at > oldMemory.last_reply_at ? current.handled_key : oldMemory.handled_key || current.handled_key,
+      last_reply_at: Math.max(current.last_reply_at, oldMemory.last_reply_at),
+    })
+    db.prepare('DELETE FROM dm_memory WHERE conv_id=?').run(oldId)
     db.prepare('DELETE FROM dm_conversations WHERE id=?').run(oldId)
   })()
 }
@@ -190,8 +205,8 @@ function saveMsg(m, legacyKey) {
 export function dmListMsgs(convId, limit = 200) {
   const rows = db
     .prepare(
-      `SELECT ${DM_FIELDS.join(',')}` +
-        ' FROM dm_messages WHERE conv_id=? ORDER BY ts DESC LIMIT ?',
+      `SELECT rowid AS seq, ${DM_FIELDS.join(',')}` +
+        ' FROM dm_messages WHERE conv_id=? ORDER BY ts DESC, rowid DESC LIMIT ?',
     )
     .all(convId, limit)
   return rows.reverse().map(readMsg)
@@ -219,4 +234,25 @@ export function dmPruneConvs(ids) {
 export function closeDb() {
   if (db) db.close()
   db = null
+}
+
+export function dmGetMemory(convId) {
+  return db.prepare('SELECT * FROM dm_memory WHERE conv_id=?').get(convId)
+    || { conv_id: convId, blocked: 0, summary: '', summary_cursor: 0, updated: 0, handled_key: '', last_reply_at: 0 }
+}
+
+export function dmSaveMemory(convId, patch) {
+  const fields = ['blocked', 'summary', 'summary_cursor', 'updated', 'handled_key', 'last_reply_at'].filter(k => k in patch)
+  db.prepare('INSERT OR IGNORE INTO dm_memory(conv_id) VALUES(?)').run(convId)
+  if (fields.length) db.prepare(`UPDATE dm_memory SET ${fields.map(k => `${k}=?`).join(',')} WHERE conv_id=?`).run(...fields.map(k => patch[k]), convId)
+  return dmGetMemory(convId)
+}
+
+export function dmMemoryBatch(convId, cursor, limit = 40) {
+  return db.prepare('SELECT rowid AS seq, * FROM dm_messages WHERE conv_id=? AND rowid>? ORDER BY rowid LIMIT ?')
+    .all(convId, cursor, limit).map(readMsg)
+}
+
+export function dmPendingMemories() {
+  return db.prepare('SELECT m.conv_id FROM dm_messages m LEFT JOIN dm_memory s ON s.conv_id=m.conv_id WHERE m.rowid>COALESCE(s.summary_cursor,0) GROUP BY m.conv_id').all()
 }

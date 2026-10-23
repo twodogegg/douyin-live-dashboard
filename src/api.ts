@@ -1,4 +1,4 @@
-import type { AiCard, DmConv, DmMsg, DmGroup, DmMedia, DmStat, MsgItem, Stat } from './types'
+import type { AiCard, DmAgent, DmMemory, DmConv, DmMsg, DmGroup, DmMedia, DmStat, MsgItem, Stat } from './types'
 
 async function req<T>(path: string, init?: RequestInit): Promise<T | null> {
   try {
@@ -95,9 +95,11 @@ export const api = {
     req<{ ok: boolean; already?: boolean; after?: string; msg?: string }>('/dm/member-follow', post({ conv_id, member_id })),
   dmMedia: (key: string, refresh = false) => req<DmMedia>('/dm/media/resolve', post({ key, refresh })),
   dmMediaOpen: (key: string) => req<{ ok: boolean; msg?: string }>('/dm/media/open', post({ key })),
-  dmAgent: () => req<{ system_prompt: string; temperature: number }>('/dm/agent'),
-  dmSaveAgent: (c: { system_prompt: string; temperature: number }) =>
+  dmAgent: () => req<DmAgent>('/dm/agent'),
+  dmSaveAgent: (c: DmAgent) =>
     req<{ ok: boolean; msg?: string }>('/dm/agent', post(c)),
+  dmBlock: (conv_id: string, blocked: boolean) => req<{ ok: boolean; msg?: string }>('/dm/block', post({ conv_id, blocked })),
+  dmMemory: (id: string) => req<DmMemory>(`/dm/memory/${encodeURIComponent(id)}`),
   dmDump: () => req<{ url: string; title: string; tree: string }>('/dm/dump'),
 }
 

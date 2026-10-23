@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { api } from '../api'
 import { useDmStream } from '../hooks/useDmStream'
+import { DmSettingsDialog } from './DmSettingsDialog'
 import type { DmGroup, DmGroupMember, DmMedia, DmMsg } from '../types'
 
 function ConvAvatar({ name, url }: { name: string; url: string | null }) {
@@ -135,7 +136,8 @@ function MediaDialog({ message, onClose }: { message: DmMsg; onClose: () => void
 }
 
 export function DmPanel() {
-  const { stat, convs, activeId, msgs, wsDown, selecting, selectionError, openConv, activateConv, refreshConvs } = useDmStream()
+  const { stat, convs, activeId, msgs, memory, wsDown, selecting, selectionError, openConv, activateConv, refreshConvs } = useDmStream()
+  const [settingsOpen, setSettingsOpen] = useState(false)
   const [text, setText] = useState('')
   const [busy, setBusy] = useState<'' | 'boot' | 'draft' | 'send' | 'sync' | 'attach' | 'group' | 'member'>('')
   const [note, setNote] = useState('')
@@ -153,6 +155,18 @@ export function DmPanel() {
   const say = (msg: string, bad = false) => {
     setNote(msg)
     setNoteBad(bad)
+  }
+
+  const block = async (id: string, blocked: boolean) => {
+    const result = await api.dmBlock(id, blocked)
+    if (result?.ok) {
+      await refreshConvs()
+      say(blocked ? '已加入过滤名单，仅手动回复' : '已移出过滤名单')
+    } else {
+      const error = result?.msg || '过滤名单保存失败'
+      say(error, true)
+      return error
+    }
   }
 
   useEffect(() => {
@@ -303,6 +317,11 @@ export function DmPanel() {
           </button>
           <button onClick={() => api.dmOpen()}>打开窗口</button>
         </div>
+        <div className="dm-auto-tools">
+          <button onClick={() => setSettingsOpen(true)}>自动回复设置</button>
+          <span className="tag">{stat.auto_enabled ? '自动回复已开启' : '自动回复已关闭'}</span>
+          {stat.auto_status && <div className="note" role="status">{stat.auto_status}</div>}
+        </div>
         {!stat.running && (
           <div className="dm-empty">
             点「开启私信」后会在后台打开抖音私信页（不抢占前台），
@@ -324,7 +343,7 @@ export function DmPanel() {
               <ConvAvatar name={c.name} url={c.avatar} />
               <span className="dm-item-body">
                 <span className="dm-item-top">
-                  <span className="dm-name">{c.name || '抖音用户'}</span>
+                  <span className="dm-name">{c.name || '抖音用户'}{c.auto_reply_blocked ? ' · 手动' : ''}</span>
                   <span className="dm-time">{c.last_time || ''}</span>
                 </span>
                 <span className="dm-preview">{c.preview || '（暂无消息）'}</span>
@@ -338,6 +357,9 @@ export function DmPanel() {
       <section className="dm-thread">
         <h2>
           {active ? active.name : '选择一个会话'}
+          {active && !active.is_group && <button className="pill dm-head-btn" onClick={() => block(active.id, !active.auto_reply_blocked)}>
+            {active.auto_reply_blocked ? '移出过滤名单' : '仅手动回复'}
+          </button>}
           {activeId && !!active?.is_group && (
             <button
               className="pill dm-head-btn"
@@ -349,6 +371,11 @@ export function DmPanel() {
           )}
           <span className="tag">{activeId ? `会话 ${activeId.slice(0, 10)}` : ''}</span>
         </h2>
+
+        {activeId && <details className="dm-memory" key={activeId}>
+          <summary>会话记忆{memory?.updated ? ` · 更新于 ${new Date(memory.updated).toLocaleString('zh-CN', { hour12: false })}` : ''}</summary>
+          <p>{memory?.summary || '暂无摘要；读取到对话后会自动生成，并仅用于当前会话。需要先配置模型。'}</p>
+        </details>}
 
         <div className="dm-msgs" ref={feedRef}>
           {!activeId && (
@@ -404,6 +431,7 @@ export function DmPanel() {
       </main>
 
       {media && <MediaDialog message={media} onClose={() => setMedia(null)} />}
+      {settingsOpen && <DmSettingsDialog convs={convs} onClose={() => setSettingsOpen(false)} onBlocked={block} />}
 
       {groupOpen && group && (
         <div className="overlay" onClick={() => setGroupOpen(false)}>

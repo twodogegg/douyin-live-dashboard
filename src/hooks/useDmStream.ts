@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { api } from '../api'
-import type { DmConv, DmMsg, DmStat } from '../types'
+import type { DmConv, DmMemory, DmMsg, DmStat } from '../types'
 
 const INITIAL_STAT: DmStat = {
   status: '未启动',
@@ -20,6 +20,7 @@ export function useDmStream() {
   const [convs, setConvs] = useState<DmConv[]>([])
   const [activeId, setActiveId] = useState('')
   const [msgs, setMsgs] = useState<DmMsg[]>([])
+  const [memory, setMemory] = useState<DmMemory | null>(null)
   const [wsDown, setWsDown] = useState(false)
   const [selecting, setSelecting] = useState(false)
   const [selectionError, setSelectionError] = useState('')
@@ -36,6 +37,7 @@ export function useDmStream() {
 
   useEffect(() => {
     activeRef.current = activeId
+    setMemory(null)
     if (!activeId) {
       setMsgs([])
       return
@@ -45,6 +47,7 @@ export function useDmStream() {
     api.dmMsgs(activeId).then((r) => {
       if (alive && r) setMsgs(prev => [...new Map([...r.messages, ...prev.filter(m => m.conv_id === activeId)].map(m => [m.key, m])).values()].sort((a, b) => a.ts - b.ts))
     })
+    api.dmMemory(activeId).then(r => { if (alive && r) setMemory(r) })
     setConvs((prev) => prev.map((c) => (c.id === activeId ? { ...c, unread: 0 } : c)))
     return () => {
       alive = false
@@ -97,6 +100,12 @@ export function useDmStream() {
           break
         case 'dm_conv':
           if (m.conv) upsert(m.conv as DmConv)
+          break
+        case 'dm_policy':
+          setConvs(prev => prev.map(c => c.id === m.conv_id ? { ...c, auto_reply_blocked: Number(m.blocked) } : c))
+          break
+        case 'dm_memory':
+          if (m.conv_id === activeRef.current) setMemory(m.memory as DmMemory)
           break
         case 'dm_selected':
           activateConv(String(m.conv_id))
@@ -157,5 +166,5 @@ export function useDmStream() {
     }
   }, [refreshConvs, activateConv])
 
-  return { stat, convs, activeId, msgs, wsDown, selecting, selectionError, openConv, activateConv, refreshConvs }
+  return { stat, convs, activeId, msgs, memory, wsDown, selecting, selectionError, openConv, activateConv, refreshConvs }
 }

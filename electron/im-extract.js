@@ -377,15 +377,16 @@ async (message, readImage = false) => {
         || (assets.size === 1 && matches.find(m => m.aweme_id || m.media_url));
       if (media) {
         if (!readImage) return { data, media };
-        const row = [...list.querySelectorAll('.messageMessageBoxmessageBox')].find(el => {
+        const findBox = () => [...list.querySelectorAll('.messageMessageBoxmessageBox')].find(el => {
           const model = prop(el, 'message');
           return String(model?.serverId || model?.clientId || '') === media.source_id;
-        });
-        const box = row?.querySelector('.MessageItemImageImageBox');
-        box?.scrollIntoView({ block: 'center' });
+        })?.querySelector('.MessageItemImageImageBox');
+        findBox()?.scrollIntoView({ block: 'nearest' });
         // 私信图片由抖音原生组件解密，不能把加密 CDN 文件直接交给浏览器显示。
-        for (let i = 0; i < 50; i++) {
-          const image = box?.querySelector('img');
+        // 滚动后虚拟列表可能重建节点，每次等待都按消息 ID 重新查找。
+        for (let i = 0; i < 100; i++) {
+          const image = findBox()?.querySelector('img');
+          if (image?.loading === 'lazy') image.loading = 'eager';
           const src = image?.currentSrc || image?.src || '';
           if (image?.complete && image.naturalWidth && /^https?:\/\//.test(src)) return { data, media, inline: src };
           if (image?.complete && image.naturalWidth && /^(data:image\/|blob:)/.test(src)) {
@@ -400,7 +401,7 @@ async (message, readImage = false) => {
           }
           await new Promise(r => setTimeout(r, 100));
         }
-        throw new Error('原图片尚未加载，请在抖音打开原消息后重试');
+        throw new Error('原图片尚未加载，将稍后重试');
       }
       const previous = list.scrollTop;
       list.scrollTop += Math.max(200, list.clientHeight * 0.8) * (reverse ? -1 : 1);
@@ -470,6 +471,7 @@ async (text) => {
 // 校准用：导出私信页面上可见的结构骨架
 export const IM_DUMP_JS = String.raw`
 () => {
+  ${MODEL_HELPERS}
   const clean = s => (s || '').replace(/\s+/g, ' ').trim();
   const lines = [];
   const walk = (el, depth) => {
@@ -487,7 +489,15 @@ export const IM_DUMP_JS = String.raw`
     if (el.shadowRoot) for (const c of el.shadowRoot.children) walk(c, depth + 1);
   };
   walk(document.body, 0);
-  return { url: location.href, title: document.title, tree: lines.join('\n') };
+  const images = [...document.querySelectorAll('.MessageItemImageImageBox')].map(box => {
+    const model = prop(box.closest('.messageMessageBoxmessageBox'), 'message');
+    const image = box.querySelector('img');
+    return { source_id: String(model?.serverId || model?.clientId || ''),
+      complete: image?.complete, width: image?.naturalWidth, loading: image?.loading,
+      source_type: (image?.currentSrc || image?.src || '').split(':')[0],
+      children: [...box.children].map(el => el.tagName) };
+  });
+  return { url: location.href, title: document.title, tree: lines.join('\n'), images };
 }
 `
 
