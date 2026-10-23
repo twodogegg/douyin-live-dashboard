@@ -1,4 +1,7 @@
 import { useEffect, useState } from 'react'
+import { Button } from './ui/button'
+import { Badge } from './ui/badge'
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from './ui/dialog'
 import { api } from '../api'
 
 /** 抖音登录态管理：打开登录窗口、手动保存、清空后重新登录。 */
@@ -43,42 +46,9 @@ export function AccountDialog({
     setMsg('登录态已清空，请重新登录')
   }
 
-  return (
-    <div
-      className="overlay"
-      onClick={(e) => {
-        if (e.target === e.currentTarget) onClose()
-      }}
-    >
-      <div className="dlg">
-        <h3>抖音登录</h3>
-        <p className="note">登录态保存在本机应用数据目录，重启应用会自动复用。</p>
-
-        <div className="row" style={{ justifyContent: 'space-between', marginTop: 14 }}>
-          <span className={`pill${logged ? ' on' : ''}`}>{logged ? '已登录' : '未登录'}</span>
-          <span className="login-msg">{msg}</span>
-        </div>
-
-        <div className="row">
-          {confirmClear ? (
-            <>
-              <span className="login-msg">清空后需要重新扫码登录</span>
-              <button onClick={() => setConfirmClear(false)}>取消</button>
-              <button className="primary" onClick={clear}>
-                确认清空
-              </button>
-            </>
-          ) : (
-            <>
-              <button onClick={startLogin}>打开抖音窗口</button>
-              <button onClick={save} disabled={!logged}>
-                保存登录态
-              </button>
-              <button onClick={() => setConfirmClear(true)}>清空登录态</button>
-            </>
-          )}
-        </div>
-      </div>
-    </div>
-  )
+  return <Dialog open onOpenChange={open => { if (!open) onClose() }}><DialogContent>
+    <DialogHeader><DialogTitle>抖音账号</DialogTitle><DialogDescription>管理登录状态。重启应用后会自动复用已保存的登录。</DialogDescription></DialogHeader>
+    <div className="flex items-center gap-3"><Badge variant={logged ? 'secondary' : 'outline'}>{logged ? '已登录' : '未登录'}</Badge><span className="helper-text" role="status">{msg}</span></div>
+    {confirmClear ? <><p className="helper-text">清空后需要重新扫码登录，后台私信接收将暂停。</p><DialogFooter><Button variant="outline" onClick={() => setConfirmClear(false)}>取消</Button><Button variant="destructive" onClick={clear}>确认清空</Button></DialogFooter></> : <DialogFooter><Button variant="ghost" onClick={() => setConfirmClear(true)}>清空登录态</Button><Button variant="outline" onClick={startLogin}>打开抖音窗口</Button><Button onClick={save} disabled={!logged}>保存登录态</Button></DialogFooter>}
+  </DialogContent></Dialog>
 }

@@ -1,5 +1,8 @@
 // 注入到抖音私信页执行的脚本：读取会话列表与当前对话、打开会话、发送消息。
 // 从页面组件读取稳定 ID，昵称与头像取实际显示内容；失配时可用 /dm/dump 校准。
+import { currentAccount } from './dm-identity.js'
+import { confirmedOutgoing, deliveryContent } from './dm-delivery.js'
+import { setEditorText } from './dm-editor.js'
 import { mediaIdentity } from './media-data.js'
 
 const MODEL_HELPERS = String.raw`
@@ -74,6 +77,7 @@ export const IM_SCAN_JS = String.raw`
 () => {
   ${LIST_HELPERS}
   const out = {
+    account_id: (${currentAccount})(window.userInfoStore),
     url: location.href, ok: false, conversations: [], active_idx: -1,
     active_id: '', messages: [], diag: {},
   };
@@ -152,6 +156,7 @@ export const IM_SCAN_JS = String.raw`
       const content = b.querySelector('[data-e2e="msg-item-content"]');
       const share = b.querySelector('.MessageItemShareAwemecontainer');
       const imageBox = b.querySelector('.MessageItemImageImageBox');
+      const audioBox = b.querySelector('.MessageItemAudioaudioBoxWrapper');
       const unsupported = b.querySelector('.MessageItemUnsuportunsupport');
       const model = prop(b, 'message');
       if (model?.conversationId && out.active_id && model.conversationId !== out.active_id) continue;
@@ -173,7 +178,11 @@ export const IM_SCAN_JS = String.raw`
       let images = [];
       let anchor = content || b;
 
-      if (share) {
+      if (audioBox) {
+        kind = 'audio';
+        text = '[语音]';
+        anchor = audioBox;
+      } else if (share) {
         kind = Number(data.awemeType) === 68 || Number(model?.type) === 77 ? 'note' : 'video';
         const img = share.querySelector('img.MessageItemShareAwemeawemeContainer') || share.querySelector('img');
         const a = share.querySelector('.MessageItemShareAwemeauthorName');
@@ -217,6 +226,8 @@ export const IM_SCAN_JS = String.raw`
       const timeEl = b.querySelector('.MessageBoxTimetimeLayout');
       const ts = model?.createdAt ? new Date(model.createdAt).getTime() / 1000 : 0;
       rows.push({ dir, kind, text, thumb, author, ...sender, aweme_id, video_url, media_url, images,
+        server_confirmed: /^\d+$/.test(String(model?.serverId || '')) && String(model?.serverId) !== '0',
+        client_id: String(model?.clientId || ''),
         source_id: String(model?.serverId || model?.clientId || ''), ts: Number.isFinite(ts) ? ts : 0,
         time: timeEl ? clean(timeEl.innerText) : '' });
     }
@@ -377,6 +388,42 @@ async (message, readImage = false) => {
         || (assets.size === 1 && matches.find(m => m.aweme_id || m.media_url));
       if (media) {
         if (!readImage) return { data, media };
+        if (readImage === 'audio') {
+          const box = [...list.querySelectorAll('.messageMessageBoxmessageBox')].find(el => {
+            const model = prop(el, 'message');
+            return String(model?.serverId || model?.clientId || '') === media.source_id;
+          })?.querySelector('.MessageItemAudioaudioBoxWrapper');
+          if (!box) throw new Error('没有找到原语音气泡');
+          box.scrollIntoView({ block: 'nearest' });
+          const originalPlay = HTMLMediaElement.prototype.play;
+          let player, timer;
+          try {
+            const source = new Promise((resolve, reject) => {
+              timer = setTimeout(() => reject(new Error('原语音加载失败，请在抖音打开原消息后重试')), 15000);
+              HTMLMediaElement.prototype.play = function () {
+                if (!player && this.tagName === 'AUDIO') { player = this; resolve(this.currentSrc || this.src); }
+                return Promise.resolve();
+              };
+              box.click();
+            });
+            const url = await source;
+            if (!url.startsWith('blob:')) throw new Error('未取得抖音解密后的原语音');
+            const blob = await (await fetch(url)).blob();
+            if (!blob.size || blob.size > 20 * 1024 * 1024) throw new Error('语音为空或超过 20 MB');
+            const inline = await new Promise((resolve, reject) => {
+              const reader = new FileReader();
+              reader.onload = () => resolve(reader.result);
+              reader.onerror = reject;
+              reader.readAsDataURL(blob);
+            });
+            return { data, media, inline };
+          } finally {
+            clearTimeout(timer);
+            HTMLMediaElement.prototype.play = originalPlay;
+            if (player) player.pause();
+            box.click();
+          }
+        }
         const findBox = () => [...list.querySelectorAll('.messageMessageBoxmessageBox')].find(el => {
           const model = prop(el, 'message');
           return String(model?.serverId || model?.clientId || '') === media.source_id;
@@ -416,16 +463,31 @@ async (message, readImage = false) => {
 
 // 写入并发送。发送后校验文本确实出现在页面上。
 export const IM_SEND_JS = String.raw`
-async (text) => {
+async (text, expectedId, account) => {
+  ${MODEL_HELPERS}
+  const writeEditor = ${setEditorText};
+  const deliveryContent = ${deliveryContent};
+  const scan = () => {
+    const snapshot = (${IM_SCAN_JS})();
+    snapshot.messages = snapshot.messages.map(m => ({ ...m, direction: m.sender_id ? String(m.sender_id) === account ? 'out' : 'in' : m.direction }));
+    return snapshot;
+  };
+  const before = scan();
+  if (!before.ok || before.active_id !== expectedId) return { ok: false, outcome: 'failed', msg: '会话已切换，已取消发送' };
+  const receipt = ${confirmedOutgoing};
+  const started = Date.now();
   const wait = ms => new Promise(r => setTimeout(r, ms));
   const clean = s => (s || '').replace(/\s+/g, ' ').trim();
   const boxes = [...document.querySelectorAll('textarea, [contenteditable="true"]')]
     .filter(e => e.offsetParent !== null && !e.disabled && !e.readOnly);
   const box = boxes.sort((a, b) => b.getBoundingClientRect().width - a.getBoundingClientRect().width)[0];
-  if (!box) return { ok: false, msg: '没找到私信输入框' };
+  if (!box) return { ok: false, outcome: 'failed', msg: '没找到私信输入框' };
 
   box.focus();
-  if (box.tagName === 'TEXTAREA') {
+  const editor = prop(box, 'editor');
+  if (box.hasAttribute('data-slate-editor')) {
+    if (!writeEditor(editor, text)) return { ok: false, outcome: 'failed', msg: '原生编辑器未完整写入回复，已取消发送' };
+  } else if (box.tagName === 'TEXTAREA') {
     const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set;
     setter.call(box, text);
     box.dispatchEvent(new Event('input', { bubbles: true }));
@@ -439,6 +501,9 @@ async (text) => {
     box.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: text }));
   }
   await wait(300);
+
+  const latest = scan();
+  if (latest.active_id !== expectedId || latest.messages.at(-1)?.key !== before.messages.at(-1)?.key) return { ok: false, outcome: 'failed', msg: '对话已更新，已取消旧回复' };
 
   // 优先点私信的发送按钮，找不到再用回车
   const btn = document.querySelector('.messageMsgInputpublishBtn, .e2e-send-msg-btn')
@@ -458,13 +523,14 @@ async (text) => {
     }
   }
 
-  await wait(800);
-  const left = box.tagName === 'TEXTAREA' ? box.value : (box.innerText || '');
-  const appeared = (document.body.innerText || '').includes(text);
-  if (!appeared) {
-    return { ok: false, msg: clean(left) ? '文本还在输入框里，发送未成功' : '没有检测到发送成功' };
+  for (let n = 0; n < 10; n++) {
+    await wait(400);
+    const after = scan();
+    if (after.active_id !== expectedId) break;
+    const confirmed = receipt(before, after, text, started);
+    if (confirmed) return { ok: true, outcome: 'confirmed', source_id: confirmed.source_id, partial: !!confirmed.partial };
   }
-  return { ok: true };
+  return { ok: false, outcome: 'unknown', msg: '发送结果未确认，请在抖音窗口核对；不会自动重发' };
 }
 `
 

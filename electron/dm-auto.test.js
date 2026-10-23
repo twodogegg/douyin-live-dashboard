@@ -208,3 +208,46 @@ test('最多重试三次，人工接管和新消息仍可替换失败任务', as
   await s.auto.tick()
   assert.equal(attempts, 4)
 })
+
+test('协议作为触发链路时浏览器仅补偿历史，不能产生第二个自动回复任务', async () => {
+  const s = setup()
+  s.auto.observe({ conversations: [], messages: [] }, [], false)
+  const m = { key: 'a:m:1', conv_id: 'a', direction: 'in', ts: 100, text: '你好' }
+  s.auto.observe({ active_id: 'a', conversations: [{ id: 'other', unread: 1, preview: '历史补偿' }], messages: [m] }, [m], false)
+  s.advance(10000)
+  await s.auto.tick()
+  assert.deepEqual(s.sent, [])
+  assert.ok(s.read.includes('other'))
+  s.auto.enqueue('a', 110000)
+  s.advance(5000)
+  await s.auto.tick()
+  assert.deepEqual(s.sent, ['a'])
+})
+
+test('结果不确定的发送不会因重试或重新开启自动回复而重复执行', async () => {
+  const s = setup()
+  s.scan('a', '历史')
+  s.scan('a', '新问题')
+  s.memory('a').send_outcome = 'unknown'
+  s.advance(10000)
+  await s.auto.tick()
+  s.auto.reset()
+  s.scan('a', '新问题')
+  s.scan('a', '另一条新问题')
+  s.advance(10000)
+  await s.auto.tick()
+  assert.deepEqual(s.sent, [])
+})
+
+
+test('正在等待回执时的新消息仍替换任务，结果不确定才暂停后续发送', async () => {
+  const s = setup()
+  s.scan('a', '历史')
+  s.scan('a', '第一轮')
+  s.memory('a').send_outcome = 'pending'
+  s.scan('a', '发送期间的新消息')
+  s.memory('a').send_outcome = 'confirmed'
+  s.advance(5000)
+  await s.auto.tick()
+  assert.deepEqual(s.sent, ['a'])
+})

@@ -18,3 +18,6 @@ __pycache__/
 node_modules/
 dist/
 release/
+
+# 浏览器验收产物
+.playwright-cli/

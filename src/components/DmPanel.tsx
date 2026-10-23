@@ -1,19 +1,30 @@
+import { ArrowLeft, ArrowUpRight, AudioLines, BookOpen, Bot, CheckCheck, ChevronRight, CirclePause, Inbox, MessageSquare, Paperclip, Play, Radio, RefreshCw, Search, Send, Settings2, ShieldCheck, Sparkles, Users, X } from 'lucide-react'
+import { Button } from './ui/button'
+import { Input } from './ui/input'
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from './ui/dialog'
+import { Badge } from './ui/badge'
+import { Card, CardHeader, CardDescription, CardTitle, CardContent } from './ui/card'
+import { Avatar, AvatarImage, AvatarFallback } from './ui/avatar'
+import { InputGroup, InputGroupAddon, InputGroupInput } from './ui/input-group'
+import { Textarea } from './ui/textarea'
+import { ToggleGroup, ToggleGroupItem } from './ui/toggle-group'
+import { Empty, EmptyHeader, EmptyMedia, EmptyTitle, EmptyDescription, EmptyContent } from './ui/empty'
+import { Alert, AlertDescription, AlertTitle } from './ui/alert'
+import { Skeleton } from './ui/skeleton'
+import { Message, MessageAvatar, MessageContent, MessageHeader, MessageFooter } from './ui/message'
+import { Bubble, BubbleContent } from './ui/bubble'
+import { MessageScrollerProvider, MessageScroller, MessageScrollerViewport, MessageScrollerContent, MessageScrollerItem, MessageScrollerButton } from './ui/message-scroller'
+import { cn } from '../lib/utils'
 import { useEffect, useRef, useState } from 'react'
 import { api } from '../api'
 import { useDmStream } from '../hooks/useDmStream'
 import { DmSettingsDialog } from './DmSettingsDialog'
+import { VoiceDialog } from './VoiceDialog'
+import { DmMemoryPanel } from './DmMemoryPanel'
 import type { DmGroup, DmGroupMember, DmMedia, DmMsg } from '../types'
 
 function ConvAvatar({ name, url }: { name: string; url: string | null }) {
-  return (
-    <span className="av dm-av">
-      {url ? (
-        <img src={url} referrerPolicy="no-referrer" loading="lazy" alt="" />
-      ) : (
-        <i>{Array.from((name || '?').trim())[0] || '?'}</i>
-      )}
-    </span>
-  )
+  return <Avatar size="lg"><AvatarImage src={url || undefined} alt={name} referrerPolicy="no-referrer" /><AvatarFallback>{Array.from((name || '?').trim())[0] || '?'}</AvatarFallback></Avatar>
 }
 
 /** 纯文本里的 URL 单独成链接，点击用系统浏览器打开 */
@@ -34,7 +45,26 @@ function LinkText({ text }: { text: string }) {
   )
 }
 
+function AudioMessage({ m }: { m: DmMsg }) {
+  const [busy, setBusy] = useState(false)
+  const [text, setText] = useState('')
+  const [error, setError] = useState('')
+  return <div className="dm-text">
+    <span>语音消息</span>
+    {m.transcript || text ? <p>{m.transcript || text}</p> : <button disabled={busy} onClick={async () => {
+      setBusy(true)
+      setError('')
+      const r = await api.voiceTranscribe(m.key)
+      setBusy(false)
+      if (r?.ok && r.text) setText(r.text)
+      else setError(r?.msg || '语音识别失败，请重试')
+    }}>{busy ? '识别中…' : '转文字'}</button>}
+    {error && <p className="note" role="status">{error}</p>}
+  </div>
+}
+
 function MsgContent({ m, onMedia }: { m: DmMsg; onMedia: (m: DmMsg) => void }) {
+  if (m.kind === 'audio') return <AudioMessage m={m} />
   if (m.kind === 'image') {
     return (
       <button className="dm-media" onClick={() => onMedia(m)} title="查看原图">
@@ -98,15 +128,13 @@ function MediaDialog({ message, onClose }: { message: DmMsg; onClose: () => void
   useEffect(() => { setZoom(false); setError('') }, [index])
 
   return (
-    <div className="overlay" onClick={onClose}>
-      <div className="dlg dm-player" onClick={e => e.stopPropagation()} role="dialog" aria-label="媒体预览">
-        <h3>{title}</h3>
-        {loading && <div className="dm-empty">正在加载媒体…</div>}
+    <Dialog open onOpenChange={open => { if (!open) onClose() }}><DialogContent className="settings-content sm:max-w-3xl"><div className="media-preview"><DialogHeader><DialogTitle>{title}</DialogTitle><DialogDescription>查看原始媒体，可在抖音中打开原消息。</DialogDescription></DialogHeader>
+        {loading && <Skeleton className="h-64 w-full" />}
         {media?.url && <video src={media.url} poster={message.thumb} controls autoPlay onError={() => setError('视频播放失败，请重试或查看抖音原作品')} />}
         {!!images.length && (
           <>
             <div className="dm-image-view">
-              <button className={zoom ? 'dm-image-zoom' : ''} onClick={() => setZoom(v => !v)} title={zoom ? '适应窗口' : '放大图片'}>
+              <button className={cn(zoom && 'dm-image-zoom')} onClick={() => setZoom(v => !v)} title={zoom ? '适应窗口' : '放大图片'}>
                 <img src={images[index]} alt={`第 ${index + 1} 张图片`} onError={() => setError('图片加载失败，请重试刷新原图地址')} />
               </button>
             </div>
@@ -130,14 +158,14 @@ function MediaDialog({ message, onClose }: { message: DmMsg; onClose: () => void
           {error && <button onClick={() => setAttempt(n => n + 1)}>重试</button>}
           <button onClick={onClose}>关闭</button>
         </div>
-      </div>
-    </div>
+      </div></DialogContent></Dialog>
   )
 }
 
 export function DmPanel() {
   const { stat, convs, activeId, msgs, memory, wsDown, selecting, selectionError, openConv, activateConv, refreshConvs } = useDmStream()
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [voiceOpen, setVoiceOpen] = useState(false)
   const [text, setText] = useState('')
   const [busy, setBusy] = useState<'' | 'boot' | 'draft' | 'send' | 'sync' | 'attach' | 'group' | 'member'>('')
   const [note, setNote] = useState('')
@@ -147,10 +175,21 @@ export function DmPanel() {
   const [memberNote, setMemberNote] = useState('')
   const [memberSearch, setMemberSearch] = useState('')
   const [media, setMedia] = useState<DmMsg | null>(null)
-  const feedRef = useRef<HTMLDivElement>(null)
+  const [search, setSearch] = useState('')
+  const [filter, setFilter] = useState('all')
+  const [showProfile, setShowProfile] = useState(() => window.innerWidth >= 1280)
+  const [exampleVersion, setExampleVersion] = useState(0)
+  const [generated, setGenerated] = useState<{ original: string; source: string; latest: string; id: string } | null>(null)
+  const context = useRef({ id: activeId, key: msgs.at(-1)?.key })
+  context.current = { id: activeId, key: msgs.at(-1)?.key }
+  const visibleConvs = convs.filter(c => (!search.trim() || `${c.name} ${c.preview}`.toLowerCase().includes(search.trim().toLowerCase())) && (filter !== 'unread' || c.unread > 0) && (filter !== 'manual' || !!c.auto_reply_blocked))
+  const phaseLabels = { receiving: '接收消息', waiting: '等待合并', generating: '生成回复', sending: '正在发送', retrying: '等待重试', paused: '已暂停' }
+  const phase = stat.phase || 'paused'
+  const receiveLabel = stat.receive_mode === 'protocol' ? '实验协议' : stat.receive_mode === 'compare' ? '协议对照' : '浏览器接收'
+
 
   const active = convs.find((c) => c.id === activeId)
-  const canSend = stat.running && stat.active_id === activeId && !!activeId && text.trim().length > 0 && !busy && !selecting
+  const canSend = memory?.send_outcome !== 'unknown' && stat.running && stat.active_id === activeId && !!activeId && text.trim().length > 0 && !busy && !selecting
 
   const say = (msg: string, bad = false) => {
     setNote(msg)
@@ -160,6 +199,8 @@ export function DmPanel() {
   const block = async (id: string, blocked: boolean) => {
     const result = await api.dmBlock(id, blocked)
     if (result?.ok) {
+      setGenerated(null)
+      setText('')
       await refreshConvs()
       say(blocked ? '已加入过滤名单，仅手动回复' : '已移出过滤名单')
     } else {
@@ -170,12 +211,17 @@ export function DmPanel() {
   }
 
   useEffect(() => {
-    const el = feedRef.current
-    if (el) el.scrollTop = el.scrollHeight
-  }, [msgs])
+    if (generated && (generated.id !== activeId || generated.latest !== msgs.at(-1)?.key)) {
+      setGenerated(null)
+      setText('')
+      say('对话已更新，请重新生成草稿')
+    }
+  }, [activeId, msgs, generated])
 
   useEffect(() => {
     setText('')
+    if (window.innerWidth < 1000) setShowProfile(false)
+    setGenerated(null)
     setGroup(null)
     setGroupOpen(false)
     setMemberSearch('')
@@ -217,10 +263,14 @@ export function DmPanel() {
     if (!activeId) return
     setBusy('draft')
     say('正在生成草稿…')
+    const requested = { ...context.current }
+    const source = [...msgs].reverse().find(m => m.direction === 'in')?.key || ''
     const r = await api.dmDraft(activeId)
+    if (context.current.id !== requested.id || context.current.key !== requested.key) { setBusy(''); say('对话已更新，请重新生成草稿'); return }
     setBusy('')
     if (r && r.ok && r.text) {
       setText(r.text)
+      setGenerated({ original: r.text, source, latest: requested.key || '', id: activeId })
       say('草稿已生成，确认后点发送')
     } else {
       say((r && r.msg) || '生成失败', true)
@@ -235,7 +285,8 @@ export function DmPanel() {
     setBusy('')
     if (r && r.ok) {
       setText('')
-      say('已发送')
+      setGenerated(null)
+      say(r.partial ? '已发送首段，未自动重发其余内容' : '已发送')
     } else {
       say((r && r.msg) || '发送失败，可在私信窗口手动发送', true)
     }
@@ -296,155 +347,71 @@ export function DmPanel() {
     }
   }
 
+  const saveExample = async () => {
+    if (!generated || !generated.source || text.trim() === generated.original.trim()) return
+    const r = await api.dmAddExample(activeId, { source_key: generated.source, original: generated.original, reply: text, confirmed: true })
+    if (r?.ok) { setExampleVersion(v => v + 1); say('已收录你的人工改写，仅用于此联系人') }
+    else say(r?.msg || '样例收录失败', true)
+  }
+
   return (
     <>
-      <main className="dm-main">
-      <section className="dm-list">
-        <h2>
-          私信
-          <span className="tag">
-            {wsDown ? '连接断开' : stat.running ? stat.status : '未启动'}
-          </span>
-        </h2>
-        <div className="dm-tools">
-          {stat.running ? (
-            <button onClick={stop} disabled={busy === 'boot'}>停止</button>
-          ) : (
-            <button className="primary" onClick={start} disabled={busy === 'boot'}>开启私信</button>
-          )}
-          <button onClick={sync} disabled={!stat.running || busy === 'sync'}>
-            {busy === 'sync' ? '同步中…' : '同步'}
-          </button>
-          <button onClick={() => api.dmOpen()}>打开窗口</button>
+      <div className="workspace dm-workspace">
+        <div className="page-heading"><div><div className="eyebrow">CONVERSATION WORKSPACE</div><h1>让每一次对话，更进一步<span className="heading-dot">.</span></h1><p>消息、记忆与你的表达方式，在一个工作台里连接。</p></div><div className="page-actions"><Button variant="outline" onClick={() => setVoiceOpen(true)}><AudioLines data-icon="inline-start" />音色与语音</Button><Button variant="outline" onClick={() => setSettingsOpen(true)}><Settings2 data-icon="inline-start" />回复设置</Button><Button variant={stat.running ? 'outline' : 'default'} onClick={stat.running ? stop : start} disabled={busy === 'boot'}>{stat.running ? <CirclePause data-icon="inline-start" /> : <Play data-icon="inline-start" />}{busy === 'boot' ? '处理中…' : stat.running ? '暂停接收' : '开启私信'}</Button></div></div>
+        <div className="overview-grid dm-overview">
+          {[
+            { title: '全部会话', value: String(convs.length).padStart(2, '0'), detail: '已同步的联系人与群聊', icon: MessageSquare },
+            { title: '未读消息', value: String(convs.reduce((n, c) => n + c.unread, 0)).padStart(2, '0'), detail: '值得关注的新对话', icon: Inbox },
+            { title: '自动回复', value: stat.auto_enabled ? '已开启' : '已关闭', detail: phaseLabels[phase], icon: Bot },
+            { title: '消息连接', value: wsDown ? '服务离线' : stat.receiving ? '接收中' : stat.running ? '连接中' : '待启动', detail: stat.running && !stat.receiving ? stat.status : receiveLabel, icon: Radio },
+          ].map(item => <Card key={item.title} className="metric-card"><CardHeader><CardDescription>{item.title}</CardDescription><item.icon /><CardTitle><span className="metric-value">{item.value}</span></CardTitle></CardHeader><CardContent><span className="metric-detail">{item.detail}</span></CardContent></Card>)}
         </div>
-        <div className="dm-auto-tools">
-          <button onClick={() => setSettingsOpen(true)}>自动回复设置</button>
-          <span className="tag">{stat.auto_enabled ? '自动回复已开启' : '自动回复已关闭'}</span>
-          {stat.auto_status && <div className="note" role="status">{stat.auto_status}</div>}
-        </div>
-        {!stat.running && (
-          <div className="dm-empty">
-            点「开启私信」后会在后台打开抖音私信页（不抢占前台），
-            读取会话列表后在这里生成草稿。
-          </div>
-        )}
-        {stat.error && <div className="dm-empty bad">{stat.error}</div>}
-        <div className="dm-convs">
-          {convs.length === 0 && stat.running && (
-            <div className="dm-empty">还没有读到会话。若页面在登录页，请点「打开窗口」完成登录。</div>
-          )}
-          {convs.map((c) => (
-            <button
-              key={c.id}
-              className={`dm-item${c.id === activeId ? ' on' : ''}`}
-              onClick={() => openConv(c.id)}
-              disabled={!!busy}
-            >
-              <ConvAvatar name={c.name} url={c.avatar} />
-              <span className="dm-item-body">
-                <span className="dm-item-top">
-                  <span className="dm-name">{c.name || '抖音用户'}{c.auto_reply_blocked ? ' · 手动' : ''}</span>
-                  <span className="dm-time">{c.last_time || ''}</span>
-                </span>
-                <span className="dm-preview">{c.preview || '（暂无消息）'}</span>
-              </span>
-              {c.unread > 0 && <span className="dm-badge">{c.unread > 99 ? '99+' : c.unread}</span>}
-            </button>
-          ))}
-        </div>
-      </section>
-
-      <section className="dm-thread">
-        <h2>
-          {active ? active.name : '选择一个会话'}
-          {active && !active.is_group && <button className="pill dm-head-btn" onClick={() => block(active.id, !active.auto_reply_blocked)}>
-            {active.auto_reply_blocked ? '移出过滤名单' : '仅手动回复'}
-          </button>}
-          {activeId && !!active?.is_group && (
-            <button
-              className="pill dm-head-btn"
-              onClick={loadGroup}
-              disabled={!stat.running || !!busy || selecting}
-            >
-              {busy === 'group' ? '读取中…' : '群信息'}
-            </button>
-          )}
-          <span className="tag">{activeId ? `会话 ${activeId.slice(0, 10)}` : ''}</span>
-        </h2>
-
-        {activeId && <details className="dm-memory" key={activeId}>
-          <summary>会话记忆{memory?.updated ? ` · 更新于 ${new Date(memory.updated).toLocaleString('zh-CN', { hour12: false })}` : ''}</summary>
-          <p>{memory?.summary || '暂无摘要；读取到对话后会自动生成，并仅用于当前会话。需要先配置模型。'}</p>
-        </details>}
-
-        <div className="dm-msgs" ref={feedRef}>
-          {!activeId && (
-            <div className="dm-empty">左侧选一个会话，或先点「开启私信」同步会话列表。</div>
-          )}
-          {selecting && <div className="note">正在切换会话…</div>}
-          {msgs.map((m) => (
-            <div key={m.key} className={`dm-msg ${m.direction}`}>
-              <div className={`dm-bubble${m.kind && m.kind !== 'text' ? ' media' : ''}`}>
-                <div className="dm-sender">
-                  <ConvAvatar name={m.direction === 'out' ? '我' : m.sender_name || active?.name || '?'} url={m.sender_avatar || null} />
-                  <span>{m.direction === 'out' ? '我' : m.sender_name || (active?.is_group ? '未记录发送者' : active?.name || '对方')}</span>
-                </div>
-                <MsgContent m={m} onMedia={setMedia} />
-                <div className="dm-stamp">{m.time}</div>
-              </div>
+        {stat.error && <Alert variant="destructive"><AlertTitle>私信接收需要处理</AlertTitle><AlertDescription>{stat.error}</AlertDescription></Alert>}
+        <main className={cn('dm-layout', showProfile && activeId && 'with-profile', activeId && 'has-active')}>
+          <section className="conversation-list">
+            <div className="section-heading"><h2>消息收件箱<Badge variant="secondary">{convs.length}</Badge></h2><Button variant="ghost" size="icon-sm" aria-label="同步会话" onClick={sync} disabled={!stat.running || !!busy}><RefreshCw /></Button></div>
+            <div className="conversation-search"><InputGroup><InputGroupAddon><Search /></InputGroupAddon><InputGroupInput aria-label="搜索会话" placeholder="搜索联系人或消息…" value={search} onChange={e => setSearch(e.target.value)} /></InputGroup></div>
+            <ToggleGroup type="single" size="sm" value={filter} onValueChange={value => { if (value) setFilter(value) }} className="conversation-filters"><ToggleGroupItem value="all">全部</ToggleGroupItem><ToggleGroupItem value="unread">未读</ToggleGroupItem><ToggleGroupItem value="manual">手动回复</ToggleGroupItem></ToggleGroup>
+            <div className="conversation-scroll">
+              {!visibleConvs.length && <Empty><EmptyHeader><EmptyMedia variant="icon"><Inbox /></EmptyMedia><EmptyTitle>{search || filter !== 'all' ? '没有匹配的会话' : '收件箱准备好了'}</EmptyTitle><EmptyDescription>{search || filter !== 'all' ? '试试其他关键词或筛选条件。' : stat.running ? '正在同步抖音会话，若未登录请打开抖音窗口。' : '开启私信后，你的联系人和消息会出现在这里。'}</EmptyDescription></EmptyHeader>{!stat.running && !search && <EmptyContent><Button variant="outline" size="sm" onClick={start} disabled={!!busy}>开启私信<ChevronRight data-icon="inline-end" /></Button></EmptyContent>}</Empty>}
+              {visibleConvs.map(c => <button key={c.id} className={cn('conversation-item', c.id === activeId && 'selected')} onClick={() => openConv(c.id)} disabled={!!busy || selecting} aria-current={c.id === activeId ? 'true' : undefined}>
+                <ConvAvatar name={c.name} url={c.avatar} /><span className="conversation-item-body"><span className="conversation-item-top"><strong className="truncate">{c.name || '抖音用户'}</strong><time>{c.last_time?.match(/\d{1,2}:\d{2}/)?.[0] || c.last_time || ''}</time></span><span className="conversation-item-preview"><span className="truncate">{c.preview || '暂无消息'}</span>{c.unread > 0 && <Badge>{c.unread > 99 ? '99+' : c.unread}</Badge>}</span>{!!c.auto_reply_blocked && <span className="manual-label">仅手动回复</span>}</span>
+              </button>)}
             </div>
-          ))}
-        </div>
-
-        <div className="dm-compose">
-          <textarea
-            value={text}
-            onChange={(e) => setText(e.target.value)}
-            placeholder={activeId ? '输入回复，或点「生成草稿」' : '先选择一个会话'}
-            disabled={!stat.running || !activeId || selecting || stat.active_id !== activeId}
-            rows={3}
-            onKeyDown={(e) => {
-              if ((e.metaKey || e.ctrlKey) && e.key === 'Enter' && canSend) send()
-            }}
-          />
-          <div className="dm-actions">
-            <span className={`dm-note${noteBad ? ' bad' : ''}`}>{selectionError || note}</span>
-            <button
-              onClick={attach}
-              disabled={!stat.running || !activeId || !!busy || selecting}
-              title="发送图片或视频"
-            >
-              {busy === 'attach' ? '选择中…' : '📎 文件'}
-            </button>
-            <button
-              onClick={draft}
-              disabled={!stat.running || !activeId || !!busy || selecting}
-            >
-              {busy === 'draft' ? '生成中…' : '生成草稿'}
-            </button>
-            <button className="primary" onClick={send} disabled={!canSend}>
-              {busy === 'send' ? '发送中…' : '发送'}
-            </button>
-          </div>
-        </div>
-      </section>
-      </main>
+            <div className="inbox-footer"><span className={cn('status-dot', !stat.running && 'idle')} />{stat.receiving ? '持续同步中' : stat.running ? stat.status : '已暂停同步'}<Button variant="ghost" size="icon-xs" aria-label="打开抖音私信窗口" onClick={() => api.dmOpen()}><ArrowUpRight /></Button></div>
+          </section>
+          <section className="conversation-thread">
+            <div className="thread-heading"><Button variant="ghost" size="icon-sm" className="mobile-back" aria-label="返回会话列表" onClick={() => activateConv('')}><ArrowLeft /></Button>{active ? <><ConvAvatar name={active.name} url={active.avatar} /><div className="thread-title"><h2>{active.name}</h2><p>{active.is_group ? '群聊' : active.auto_reply_blocked ? '已由你接管 · 仅手动回复' : stat.auto_enabled ? 'AI 助理已就绪' : '手动回复模式'}</p></div></> : <div className="thread-title"><h2>对话空间</h2><p>专注于眼前的每一次交流</p></div>}
+              <div className="thread-heading-actions">{active && !active.is_group && <Button variant="outline" size="sm" onClick={() => block(active.id, !active.auto_reply_blocked)}><ShieldCheck data-icon="inline-start" />{active.auto_reply_blocked ? '恢复自动回复' : '人工接管'}</Button>}{!!active?.is_group && <Button variant="outline" size="sm" onClick={loadGroup} disabled={!stat.running || !!busy || selecting}><Users data-icon="inline-start" />群成员</Button>}{activeId && <Button variant={showProfile ? 'secondary' : 'ghost'} size="icon" aria-label="切换联系人资料" onClick={() => setShowProfile(v => !v)}><BookOpen /></Button>}</div>
+            </div>
+            {!activeId ? <Empty className="thread-empty"><EmptyHeader><EmptyMedia variant="icon"><MessageSquare /></EmptyMedia><EmptyTitle>好的对话，从这里开始</EmptyTitle><EmptyDescription>选择左侧的会话，查看消息、生成回复，<br />或慢慢建立属于这位联系人的记忆。</EmptyDescription></EmptyHeader><EmptyContent><span className="empty-privacy"><ShieldCheck />会话与记忆仅保存在本机</span></EmptyContent></Empty> : <>
+              {selecting && <div className="thread-loading"><Skeleton className="h-10 w-2/3" /><Skeleton className="h-10 w-1/2 self-end" /></div>}
+              <MessageScrollerProvider key={activeId} autoScroll defaultScrollPosition="end"><MessageScroller><MessageScrollerViewport><MessageScrollerContent className="p-6">
+                {!msgs.length && <MessageScrollerItem messageId="empty"><Empty><EmptyHeader><EmptyMedia variant="icon"><MessageSquare /></EmptyMedia><EmptyTitle>等待对话同步</EmptyTitle><EmptyDescription>读取到的消息会显示在这里。</EmptyDescription></EmptyHeader></Empty></MessageScrollerItem>}
+                {msgs.map(m => <MessageScrollerItem key={m.key} messageId={m.key}><Message align={m.direction === 'out' ? 'end' : 'start'}><MessageAvatar><ConvAvatar name={m.direction === 'out' ? '我' : m.sender_name || active?.name || '?'} url={m.sender_avatar || null} /></MessageAvatar><MessageContent><MessageHeader>{m.direction === 'out' ? '我' : m.sender_name || (active?.is_group ? '未记录发送者' : active?.name || '对方')}</MessageHeader><Bubble variant={m.direction === 'out' ? 'default' : 'muted'} align={m.direction === 'out' ? 'end' : 'start'}><BubbleContent><MsgContent m={m} onMedia={setMedia} /></BubbleContent></Bubble><MessageFooter>{m.time}{m.direction === 'out' && <CheckCheck />}</MessageFooter></MessageContent></Message></MessageScrollerItem>)}
+              </MessageScrollerContent></MessageScrollerViewport><MessageScrollerButton aria-label="跳到最新消息" /></MessageScroller></MessageScrollerProvider>
+              <div className="composer">{memory?.send_outcome === 'unknown' && <p className="helper-text" role="status">正在自动核对上一条发送回执…</p>}{memory?.send_partial === 1 && <p className="helper-text" role="status">上一条已确认发送首段，未自动重发其余内容。</p>}<div className="composer-top"><span><Sparkles />{generated ? 'AI 草稿 · 由你确认发送' : '写下你的回复'}</span>{generated && text.trim() !== generated.original.trim() && !active?.is_group && <Button variant="ghost" size="sm" onClick={saveExample}><BookOpen data-icon="inline-start" />收录改写</Button>}<span className="composer-shortcut">⌘ / Ctrl + Enter 发送</span></div><Textarea aria-label="回复内容" value={text} onChange={e => setText(e.target.value)} placeholder={stat.running ? '输入回复，或让 AI 帮你起个头…' : '开启私信后即可回复'} disabled={!stat.running || selecting || stat.active_id !== activeId} rows={3} onKeyDown={e => { if ((e.metaKey || e.ctrlKey) && e.key === 'Enter' && canSend) send() }} />
+                <div className="composer-actions"><Button variant="ghost" size="icon" aria-label="发送图片或视频" onClick={attach} disabled={!stat.running || !!busy || selecting}><Paperclip /></Button><span className={cn('composer-note', noteBad && 'error-text')} role="status">{selectionError || note}</span><Button variant="outline" onClick={draft} disabled={!stat.running || !!busy || selecting}><Sparkles data-icon="inline-start" />{busy === 'draft' ? '生成中…' : '生成草稿'}</Button><Button onClick={send} disabled={!canSend}><Send data-icon="inline-start" />{busy === 'send' ? '发送中…' : '发送'}</Button></div>
+              </div>
+            </>}
+          </section>
+          {activeId && showProfile && <div className="contact-wrapper"><Button variant="ghost" size="icon-sm" className="contact-close" aria-label="关闭联系人资料" onClick={() => setShowProfile(false)}><X /></Button><DmMemoryPanel key={activeId} id={activeId} memory={memory} name={active?.name || ''} isGroup={!!active?.is_group} refreshKey={exampleVersion} /></div>}
+        </main>
+        <div className="workspace-footnote"><span className={cn('status-dot', !stat.running && 'idle')} />{wsDown ? '服务连接断开，正在重连…' : stat.running && !stat.receiving ? stat.status : stat.auto_status || `${receiveLabel} · ${phaseLabels[phase]}`}{stat.receive_mode === 'compare' && stat.protocol?.comparison && <span>协议 {stat.protocol.comparison.protocol} · 已匹配 {stat.protocol.comparison.matched}</span>}{stat.protocol?.error && <span className="error-text">{stat.protocol.error}</span>}<span>最近同步 {stat.last_scan || '—'}</span></div>
+      </div>
 
       {media && <MediaDialog message={media} onClose={() => setMedia(null)} />}
-      {settingsOpen && <DmSettingsDialog convs={convs} onClose={() => setSettingsOpen(false)} onBlocked={block} />}
+      {settingsOpen && <DmSettingsDialog convs={convs} onClose={() => { setSettingsOpen(false); setGenerated(null); setText('') }} onBlocked={block} />}
+      {voiceOpen && <VoiceDialog initialText={text} onClose={() => setVoiceOpen(false)} />}
 
       {groupOpen && group && (
-        <div className="overlay" onClick={() => setGroupOpen(false)}>
-          <div className="dlg dm-group" onClick={(e) => e.stopPropagation()}>
-            <h3>
-              {group.name || '群信息'}
-              <span className="hint">{group.count || ''}</span>
-            </h3>
+        <Dialog open onOpenChange={setGroupOpen}><DialogContent className="settings-content sm:max-w-xl"><DialogHeader><DialogTitle>{group.name || '群信息'}</DialogTitle><DialogDescription>查看群成员，或从成员主页开始私聊。</DialogDescription></DialogHeader>
+          <div className="group-details">
             {!group.group && <div className="note">这个会话不是群聊。</div>}
             {group.group && (
               <>
                 <div className="note">已读取 {group.members.length} 人{group.complete === false ? `，共 ${group.total || '?'} 人，部分成员尚未加载` : ''}</div>
-                <input className="dm-member-search" aria-label="搜索群成员" placeholder="搜索群成员" value={memberSearch} onChange={e => setMemberSearch(e.target.value)} />
+                <Input className="dm-member-search" aria-label="搜索群成员" placeholder="搜索群成员" value={memberSearch} onChange={e => setMemberSearch(e.target.value)} />
               </>
             )}
             <div className="dm-member-list">
@@ -452,24 +419,23 @@ export function DmPanel() {
                 <div className="dm-member" key={m.id}>
                   <ConvAvatar name={m.name} url={m.avatar || null} />
                   <span className="dm-member-name">{m.name || '成员'}</span>
-                  {m.role === 1 && <span className="tag">群主</span>}
-                  {m.role === 2 && <span className="tag">管理员</span>}
-                  <button onClick={() => follow(m)} disabled={!!busy || m.followed}>
+                  {m.role === 1 && <Badge variant="secondary">群主</Badge>}
+                  {m.role === 2 && <Badge variant="secondary">管理员</Badge>}
+                  <Button variant="outline" size="sm" onClick={() => follow(m)} disabled={!!busy || m.followed}>
                     {m.followed ? '已关注' : '关注'}
-                  </button>
-                  <button onClick={() => chatMember(m)} disabled={!!busy}>
+                  </Button>
+                  <Button variant="outline" size="sm" onClick={() => chatMember(m)} disabled={!!busy}>
                     私聊
-                  </button>
+                  </Button>
                 </div>
               ))}
               {group.members.length === 0 && <div className="note">没有读到成员列表。</div>}
             </div>
             <div className="row">
               <span className="note">{memberNote}</span>
-              <button onClick={() => setGroupOpen(false)}>关闭</button>
+              <Button variant="outline" onClick={() => setGroupOpen(false)}>关闭</Button>
             </div>
-          </div>
-        </div>
+          </div></DialogContent></Dialog>
       )}
     </>
   )

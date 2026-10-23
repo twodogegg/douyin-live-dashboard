@@ -1,4 +1,4 @@
-import type { AiCard, DmAgent, DmMemory, DmConv, DmMsg, DmGroup, DmMedia, DmStat, MsgItem, Stat } from './types'
+import type { AiCard, DmContact, DmAgent, DmMemory, DmConv, DmMsg, DmGroup, DmMedia, DmStat, FishConfig, FishVoice, VoiceAudio, MemoryProfile, MsgItem, Stat } from './types'
 
 async function req<T>(path: string, init?: RequestInit): Promise<T | null> {
   try {
@@ -62,6 +62,10 @@ export const api = {
   showLiveWindow: () => req<{ ok: boolean; visible?: boolean }>('/window/show', post()),
 
   // ---- 私信 ----
+  dmContact: (id: string) => req<DmContact>(`/dm/contact/${encodeURIComponent(id)}`),
+  dmSaveContact: (id: string, contact: DmContact) => req<{ ok: boolean; msg?: string; contact?: DmContact }>(`/dm/contact/${encodeURIComponent(id)}`, post(contact)),
+  dmAddExample: (id: string, body: { source_key: string; original: string; reply: string; confirmed: boolean }) => req<{ ok: boolean; msg?: string; contact?: DmContact }>(`/dm/examples/${encodeURIComponent(id)}`, post(body)),
+  dmDeleteExample: (id: string, example: number) => req<{ ok: boolean; msg?: string; contact?: DmContact }>(`/dm/examples/${encodeURIComponent(id)}?id=${example}`, { method: 'DELETE' }),
   dmStatus: () => req<DmStat>('/dm/status'),
   dmStart: () => req<DmStat & { ok?: boolean }>('/dm/start', post()),
   dmStop: () => req<DmStat & { ok?: boolean }>('/dm/stop', post()),
@@ -76,7 +80,7 @@ export const api = {
   dmDraft: (conv_id: string) =>
     req<{ ok: boolean; text?: string; msg?: string }>('/dm/draft', post({ conv_id })),
   dmSend: (conv_id: string, text: string) =>
-    req<{ ok: boolean; msg?: string }>('/dm/send', post({ conv_id, text })),
+    req<{ ok: boolean; outcome?: 'confirmed' | 'failed' | 'unknown'; partial?: boolean; msg?: string }>('/dm/send', post({ conv_id, text })),
   dmAttach: (conv_id: string) =>
     req<{ ok: boolean; count?: number; canceled?: boolean; msg?: string }>('/dm/attach', post({ conv_id })),
   dmGroup: (conv_id: string) => req<DmGroup>('/dm/group', post({ conv_id })),
@@ -100,6 +104,20 @@ export const api = {
     req<{ ok: boolean; msg?: string }>('/dm/agent', post(c)),
   dmBlock: (conv_id: string, blocked: boolean) => req<{ ok: boolean; msg?: string }>('/dm/block', post({ conv_id, blocked })),
   dmMemory: (id: string) => req<DmMemory>(`/dm/memory/${encodeURIComponent(id)}`),
+  dmSaveMemory: (id: string, patch: { summary?: string; profile?: MemoryProfile; clear?: boolean; expected_updated?: number }) =>
+    req<{ ok: boolean; msg?: string }>(`/dm/memory/${encodeURIComponent(id)}`, post(patch)),
+  voiceConfig: () => req<FishConfig>('/dm/voice/config'),
+  voiceSaveConfig: (c: FishConfig) => req<{ ok: boolean; msg?: string; config?: FishConfig }>('/dm/voice/config', post(c)),
+  voiceList: (title: string, own: boolean, page: number, language: string) =>
+    req<{ ok: boolean; msg?: string; items: FishVoice[]; has_more: boolean }>(`/dm/voice/models?${new URLSearchParams({ title, own: String(own), page: String(page), language })}`),
+  voiceGet: (id: string) => req<{ ok: boolean; msg?: string; voice?: FishVoice }>(`/dm/voice/models/${encodeURIComponent(id)}`),
+  voicePreview: (text: string, reference_id?: string, emotion?: string) =>
+    req<VoiceAudio & { ok: boolean; msg?: string }>('/dm/voice/preview', post({ text, reference_id, emotion })),
+  voiceDesign: (instruction: string, text: string) =>
+    req<{ ok: boolean; msg?: string; candidates: VoiceAudio[] }>('/dm/voice/design', post({ instruction, text })),
+  voiceCreate: (body: { name: string; candidate_id?: string; audio?: string; mime?: string; transcript?: string; consent?: boolean }) =>
+    req<{ ok: boolean; msg?: string; voice?: FishVoice }>('/dm/voice/create', post(body)),
+  voiceTranscribe: (key: string) => req<{ ok: boolean; msg?: string; text?: string }>('/dm/voice/transcribe', post({ key })),
   dmDump: () => req<{ url: string; title: string; tree: string }>('/dm/dump'),
 }
 

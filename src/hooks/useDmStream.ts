@@ -26,6 +26,7 @@ export function useDmStream() {
   const [selectionError, setSelectionError] = useState('')
   const activeRef = useRef('')
   const selection = useRef(0)
+  const accountEpoch = useRef(0)
 
   const activateConv = useCallback((id: string) => {
     selection.current++
@@ -55,8 +56,9 @@ export function useDmStream() {
   }, [activeId])
 
   const refreshConvs = useCallback(async () => {
+    const epoch = accountEpoch.current
     const r = await api.dmConvs()
-    if (r) setConvs(r.conversations)
+    if (r && epoch === accountEpoch.current) setConvs(r.conversations)
   }, [])
 
   // 选中会话时同步在私信窗口里打开它，后续发送才对得上
@@ -95,6 +97,12 @@ export function useDmStream() {
 
     const handle = (m: WsMessage) => {
       switch (m.type) {
+        case 'dm_account':
+          accountEpoch.current++
+          activateConv('')
+          setConvs([])
+          refreshConvs()
+          break
         case 'dm_stat':
           setStat({ ...INITIAL_STAT, ...(m as unknown as Partial<DmStat>) })
           break

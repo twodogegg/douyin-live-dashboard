@@ -1,5 +1,7 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
+import tailwindcss from '@tailwindcss/vite'
+import { fileURLToPath } from 'node:url'
 
 // 前端源码在根目录的 src/，与 Python 后端同级。
 // dev 模式下 Vite 起在 18731，把所有后端路径（含 WebSocket）代理到 127.0.0.1:18732，
@@ -8,7 +10,8 @@ const API_PORT = 18732
 const BACKEND = `http://127.0.0.1:${API_PORT}`
 
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), tailwindcss()],
+  resolve: { alias: { '@': fileURLToPath(new URL('./src', import.meta.url)) } },
   server: {
     port: 18731,
     strictPort: true,

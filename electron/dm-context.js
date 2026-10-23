@@ -18,7 +18,7 @@ export function cleanReply(text) {
   return clean
 }
 
-export async function conversationMessages(rows, loadImage) {
+export async function conversationMessages(rows, loadImage, loadAudio) {
   const messages = []
   for (const message of rows) {
     const role = message.direction === 'out' ? 'assistant' : 'user'
@@ -26,9 +26,46 @@ export async function conversationMessages(rows, loadImage) {
       const url = await loadImage(message)
       if (!/^(data:image\/[\w.+-]+;base64,|https:\/\/)/.test(url)) throw new Error('没有可读取的原图')
       messages.push({ role, content: [{ type: 'image_url', image_url: { url } }] })
+    } else if (message.kind === 'audio') {
+      const transcript = message.transcript || (loadAudio && await loadAudio(message))
+      if (!transcript?.trim()) throw new Error('语音尚未识别，不能猜测语音内容')
+      messages.push({ role, content: `[语音转写，方括号中的情绪提示仅供参考]\n${transcript}` })
     } else {
       messages.push({ role, content: message.kind === 'image' ? '[我发送的图片]' : message.text })
     }
   }
   return messages
+}
+
+export function timeContext(rows, now = new Date()) {
+  const format = date => new Intl.DateTimeFormat('zh-CN', { timeZone: 'Asia/Shanghai', dateStyle: 'full', timeStyle: 'long', hour12: false }).format(date)
+  const times = rows.map((m, i) => m.ts > 0 ? `第 ${i + 1} 条（${m.direction === 'out' ? '我' : '对方'}）：${format(new Date(m.ts * 1000))}` : '').filter(Boolean)
+  return `当前北京时间：${format(now)}。时区 Asia/Shanghai（UTC+8）。相对日期以消息发送时间为准；不要把历史消息当成刚刚发生，也不要自行假定对方所在时区。\n以下时间对应随后聊天记录的顺序：\n${times.join('\n')}`
+}
+
+export function parseMemory(text) {
+  let data
+  try { data = JSON.parse(text.trim().replace(/^```(?:json)?\s*|\s*```$/g, '')) } catch { throw new Error('记忆格式无效，已保留原记忆') }
+  if (typeof data.summary !== 'string' || !data.summary.trim() || !data.profile || typeof data.profile !== 'object') throw new Error('记忆内容不完整，已保留原记忆')
+  const profile = {}
+  for (const key of ['facts', 'preferences', 'inferences']) {
+    if (!Array.isArray(data.profile[key])) throw new Error('用户画像格式无效，已保留原记忆')
+    profile[key] = data.profile[key].slice(0, 15).map(item => {
+      if (typeof item?.text !== 'string' || typeof item.evidence !== 'string' || typeof item.updated_at !== 'string') throw new Error('用户画像缺少依据或时间，已保留原记忆')
+      return { text: item.text.slice(0, 200), evidence: item.evidence.slice(0, 300), updated_at: item.updated_at.slice(0, 40) }
+    })
+  }
+  return { summary: data.summary.slice(0, 2400), profile: JSON.stringify(profile) }
+}
+
+export function contactContext(contact, loadMessage) {
+  if (!contact) return '（暂无独立联系人资料）'
+  return JSON.stringify({
+    relationship: contact.relationship, address: contact.address, tone: contact.tone, boundaries: contact.boundaries,
+    examples: contact.examples.slice(0, 5).map(example => ({
+      incoming: loadMessage(example.source_key)?.text || '',
+      reply: example.reply,
+      source: '本人改写并明确确认，仅模仿表达方式',
+    })),
+  })
 }

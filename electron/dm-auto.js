@@ -8,6 +8,7 @@ export class DmAutoReply {
   }
 
   reset() {
+    this.phase = this.io.running() && this.io.config().enabled ? 'receiving' : 'paused'
     this.pending.clear()
     this.reads = new Set()
     this.snapshots = new Map()
@@ -18,14 +19,15 @@ export class DmAutoReply {
 
   allowed(id) {
     const c = this.io.conv(id)
-    return this.io.running() && this.io.config().enabled && c && !c.is_group && !this.io.memory(id).blocked
+    return this.io.running() && this.io.config().enabled && c && !c.is_group && !this.io.memory(id).blocked && this.io.memory(id).send_outcome !== 'unknown'
   }
 
   cancel(id) {
     this.pending.delete(id)
+    if (!this.pending.size && !this.busy) this.phase = this.io.running() && this.io.config().enabled ? 'receiving' : 'paused'
   }
 
-  observe(data, inserted) {
+  observe(data, inserted, trigger = true) {
     const now = this.io.now()
     for (const m of inserted) this.dirty.set(m.conv_id, this.dirty.get(m.conv_id) ?? now + 5000)
     for (const c of data.conversations || []) {
@@ -33,13 +35,13 @@ export class DmAutoReply {
       if (c.id !== data.active_id && c.unread > 0
         && (!prev || c.preview !== prev.preview || c.unread > prev.unread || c.time_text !== prev.time_text)) {
         this.reads.add(c.id)
-        if (this.baseline) this.enqueue(c.id, now)
+        if (trigger && this.baseline) this.enqueue(c.id, now)
       }
       this.snapshots.set(c.id, { ...c })
     }
     const id = data.active_id
     const latest = data.messages?.at(-1)
-    if (id && latest) {
+    if (trigger && id && latest) {
       if (latest.direction === 'out') this.cancel(id)
       else if (this.seen.has(id) && inserted.some(m => m.conv_id === id && m.direction === 'in' && m.ts * 1000 >= this.since)) this.enqueue(id, now)
       this.seen.add(id)
@@ -49,6 +51,7 @@ export class DmAutoReply {
 
   enqueue(id, now) {
     if (!this.allowed(id)) return
+    this.phase = 'waiting'
     this.pending.set(id, { due: now + this.io.config().reply_delay * 1000 })
   }
 
@@ -64,6 +67,7 @@ export class DmAutoReply {
         if (now < Math.max(item.due, last + conf.reply_interval * 1000, (this.lastSend || 0) + conf.global_interval * 1000)) continue
         const result = await this.io.reply(id, () => this.allowed(id) && this.pending.get(id) === item)
         if (result?.retry && this.pending.get(id) === item && this.allowed(id) && (item.retries || 0) < 3) {
+          this.phase = 'retrying'
           item.retries = (item.retries || 0) + 1
           item.due = this.io.now() + 5000 * item.retries
           return
@@ -93,6 +97,7 @@ export class DmAutoReply {
     } catch (e) {
       this.io.error(`自动回复失败：${e.message || e}`)
     } finally {
+      this.phase = this.pending.size ? 'waiting' : this.io.config().enabled ? 'receiving' : 'paused'
       this.busy = false
     }
   }

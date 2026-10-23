@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url'
 import * as db from './db.js'
 import * as live from './live.js'
 import * as im from './im.js'
+import * as fish from './fish.js'
 import { startServer } from './server.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -29,7 +30,7 @@ function createMainWindow(url) {
     height: 900,
     minWidth: 1080,
     minHeight: 640,
-    backgroundColor: '#0f1115',
+    backgroundColor: '#f6f7f9',
     title: '抖音语音直播间 AI 看板',
     webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true },
   })
@@ -59,6 +60,7 @@ if (!app.requestSingleInstanceLock()) {
 
     const userData = app.getPath('userData')
     db.initDb(path.join(userData, 'live_data.db'))
+    fish.init(path.join(userData, 'fish_audio.json'), path.join(userData, 'voice_audio'))
     await live.init({
       agentPath: path.join(userData, 'agent_config.json'),
       defaultAgentPath: path.join(__dirname, 'default-agent-config.json'),

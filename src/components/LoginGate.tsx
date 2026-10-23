@@ -1,27 +1,10 @@
-export function LoginGate({
-  msg,
-  onStart,
-  onDone,
-}: {
-  msg: string
-  onStart: () => void
-  onDone: () => void
-}) {
-  return (
-    <div className="overlay gate">
-      <div className="dlg">
-        <h3>需要先登录抖音</h3>
-        <p className="note">
-          点「去登录」会打开抖音登录窗口，请完成扫码/登录；登录成功后回到本页面点「我已登录完成」。
-        </p>
-        <div className="row">
-          <span className="login-msg">{msg}</span>
-          <button onClick={onStart}>去登录</button>
-          <button className="primary" onClick={onDone}>
-            我已登录完成
-          </button>
-        </div>
-      </div>
-    </div>
-  )
+import { AudioLines, ArrowUpRight, ShieldCheck } from 'lucide-react'
+import { Button } from './ui/button'
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from './ui/dialog'
+
+export function LoginGate({ msg, onStart, onDone }: { msg: string; onStart: () => void; onDone: () => void }) {
+  return <Dialog open><DialogContent showCloseButton={false} onEscapeKeyDown={e => e.preventDefault()} onInteractOutside={e => e.preventDefault()}>
+    <div className="login-brand"><AudioLines /></div><DialogHeader><DialogTitle>连接你的抖音账号</DialogTitle><DialogDescription>在抖音窗口完成扫码登录，回来后即可开始管理直播互动和私信。</DialogDescription></DialogHeader>
+    <p className="helper-text" role="status">{msg}</p><div className="empty-privacy"><ShieldCheck />登录状态仅保存在本机</div><DialogFooter><Button variant="outline" onClick={onStart}>打开登录窗口<ArrowUpRight data-icon="inline-end" /></Button><Button onClick={onDone}>我已登录完成</Button></DialogFooter>
+  </DialogContent></Dialog>
 }

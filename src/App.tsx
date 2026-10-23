@@ -1,3 +1,6 @@
+import { AudioLines, Bot, MessagesSquare, Radio, Users } from 'lucide-react'
+import { Badge } from './components/ui/badge'
+import { Card, CardHeader, CardTitle, CardDescription, CardContent } from './components/ui/card'
 import { useEffect, useRef, useState } from 'react'
 import { api } from './api'
 import { AiFeed } from './components/AiFeed'
@@ -109,7 +112,7 @@ export default function App() {
   }
 
   return (
-    <>
+    <div className="app-shell">
       <Header
         stat={stat}
         wsDown={wsDown}
@@ -131,29 +134,23 @@ export default function App() {
       />
 
       {view === 'live' ? (
-        <main>
-          <section className="col">
-            <h2>
-              🎤 主播侧<span className="tag">视频区公屏 · 流式上屏</span>
-            </h2>
-            <MessageFeed items={r1} avatars={avatars} fallbackName="主播侧" region="r1" />
-          </section>
-          <section className="col">
-            <h2>
-              🤖 AI 实时摘要<span className="tag">{aiTag}</span>
-            </h2>
-            <AiFeed cards={ai} />
-          </section>
-          <section className="col">
-            <h2>
-              💬 观众侧<span className="tag">聊天室弹幕</span>
-            </h2>
-            <MessageFeed items={r2} avatars={avatars} fallbackName="" region="r2" />
-          </section>
-        </main>
-      ) : (
-        <DmPanel />
-      )}
+        <div className="workspace live-workspace">
+          <div className="page-heading"><div><div className="eyebrow">LIVE OVERVIEW</div><h1>每一条互动，都有回响<span className="heading-dot">.</span></h1><p>实时捕捉直播间动态，让 AI 帮你关注对话重点。</p></div><Badge variant="outline"><Radio />{connected ? '正在监听' : '准备就绪'}</Badge></div>
+          <div className="overview-grid">
+            {[
+              { title: '主播侧消息', value: stat.r1_count, description: '视频区公屏', icon: AudioLines },
+              { title: '观众侧消息', value: stat.r2_count, description: '聊天室互动', icon: Users },
+              { title: 'AI 实时摘要', value: stat.ai_count, description: stat.last_ai ? `最近更新 ${stat.last_ai}` : '等待新的分析窗口', icon: Bot },
+            ].map(item => <Card key={item.title} className="metric-card"><CardHeader><CardDescription>{item.title}</CardDescription><item.icon /><CardTitle><span className="metric-value">{item.value.toLocaleString()}</span></CardTitle></CardHeader><CardContent><span className="metric-detail">{item.description}</span></CardContent></Card>)}
+          </div>
+          <main className="live-grid">
+            <section className="col"><h2><AudioLines />主播侧<Badge variant="secondary">实时公屏</Badge></h2><MessageFeed items={r1} avatars={avatars} fallbackName="主播侧" region="r1" /></section>
+            <section className="col ai-column"><h2><Bot />AI 洞察<Badge variant="outline">{aiTag}</Badge></h2><AiFeed cards={ai} /></section>
+            <section className="col"><h2><MessagesSquare />观众侧<Badge variant="secondary">聊天室</Badge></h2><MessageFeed items={r2} avatars={avatars} fallbackName="" region="r2" /></section>
+          </main>
+          <div className="workspace-footnote"><span className="status-dot" />{connected ? '实时消息流已连接' : '连接直播间后，消息将在这里实时更新'}<span>数据仅保存在本机</span></div>
+        </div>
+      ) : <DmPanel />}
 
       {!loggedIn && <LoginGate msg={loginMsg} onStart={startLogin} onDone={finishLogin} />}
       {accountOpen && (
@@ -163,6 +160,6 @@ export default function App() {
         <SettingsDialog onClose={() => setSettingsOpen(false)} onSaved={(tag) => setAiTag(tag)} />
       )}
       {historyOpen && <HistoryDialog onClose={() => setHistoryOpen(false)} />}
-    </>
+    </div>
   )
 }

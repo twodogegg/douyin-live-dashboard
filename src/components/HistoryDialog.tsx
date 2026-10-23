@@ -1,4 +1,10 @@
 import { useEffect, useState } from 'react'
+import { History } from 'lucide-react'
+import { Button } from './ui/button'
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from './ui/dialog'
+import { Empty, EmptyHeader, EmptyMedia, EmptyTitle, EmptyDescription } from './ui/empty'
+import { Skeleton } from './ui/skeleton'
+import { cn } from '../lib/utils'
 import { api, type HistoryMessage, type HistoryWindow } from '../api'
 
 export function HistoryDialog({ onClose }: { onClose: () => void }) {
@@ -23,23 +29,17 @@ export function HistoryDialog({ onClose }: { onClose: () => void }) {
   }
 
   return (
-    <div
-      className="overlay"
-      onClick={(e) => {
-        if (e.target === e.currentTarget) onClose()
-      }}
-    >
-      <div className="dlg wide">
-        <h3>
-          历史摘要<span className="hint">点条目展开该时段的原始消息</span>
-        </h3>
+    <Dialog open onOpenChange={open => { if (!open) onClose() }}><DialogContent className="settings-content sm:max-w-3xl"><DialogHeader><DialogTitle>历史摘要</DialogTitle><DialogDescription>展开任一时段，回看摘要和对应的原始消息。</DialogDescription></DialogHeader>
         <div className="hlist">
-          {wins === null && <div className="ai-hint">加载中…</div>}
-          {wins !== null && !wins.length && <div className="ai-hint">暂无历史摘要</div>}
+          {wins === null && <Skeleton className="h-24 w-full" />}
+          {wins !== null && !wins.length && <Empty><EmptyHeader><EmptyMedia variant="icon"><History /></EmptyMedia><EmptyTitle>还没有历史摘要</EmptyTitle><EmptyDescription>开始分析直播互动后，摘要会保存在这里。</EmptyDescription></EmptyHeader></Empty>}
           {(wins ?? []).map((w) => (
             <div
               key={w.id}
-              className={`hitem${openId === w.id ? ' open' : ''}`}
+              className={cn('hitem', openId === w.id && 'open')}
+              role="button"
+              tabIndex={0}
+              onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(w.id) } }}
               onClick={() => toggle(w.id)}
             >
               <div className="hm">
@@ -73,9 +73,8 @@ export function HistoryDialog({ onClose }: { onClose: () => void }) {
           ))}
         </div>
         <div className="row">
-          <button onClick={onClose}>关闭</button>
+          <Button variant="outline" onClick={onClose}>关闭</Button>
         </div>
-      </div>
-    </div>
+    </DialogContent></Dialog>
   )
 }

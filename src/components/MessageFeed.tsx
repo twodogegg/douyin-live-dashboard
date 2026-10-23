@@ -1,56 +1,19 @@
-import { useLayoutEffect, useRef } from 'react'
-import { hashColor, norm } from '../lib/norm'
+import { MessageSquare } from 'lucide-react'
+import { norm } from '../lib/norm'
 import type { MsgItem } from '../types'
+import { Avatar as UserAvatar, AvatarFallback, AvatarImage } from './ui/avatar'
+import { Message, MessageAvatar, MessageContent, MessageHeader, MessageFooter } from './ui/message'
+import { Bubble, BubbleContent } from './ui/bubble'
+import { MessageScrollerProvider, MessageScroller, MessageScrollerViewport, MessageScrollerContent, MessageScrollerItem, MessageScrollerButton } from './ui/message-scroller'
+import { Empty, EmptyHeader, EmptyMedia, EmptyTitle, EmptyDescription } from './ui/empty'
 
 export function Avatar({ name, avatars }: { name: string; avatars: Record<string, string> }) {
-  const url = avatars[norm(name)]
-  return (
-    <span className="av">
-      {url ? (
-        <img src={url} referrerPolicy="no-referrer" loading="lazy" alt="" />
-      ) : (
-        <i style={{ background: hashColor(name) }}>
-          {Array.from((name || '?').trim())[0] || '?'}
-        </i>
-      )}
-    </span>
-  )
+  return <UserAvatar><AvatarImage src={avatars[norm(name)]} alt={name} referrerPolicy="no-referrer" /><AvatarFallback>{Array.from((name || '?').trim())[0] || '?'}</AvatarFallback></UserAvatar>
 }
 
-/** 消息流：区域1 就地更新同一条，区域2 逐条追加。 */
-export function MessageFeed({
-  items,
-  avatars,
-  fallbackName,
-  region,
-}: {
-  items: MsgItem[]
-  avatars: Record<string, string>
-  fallbackName: string
-  region: 'r1' | 'r2'
-}) {
-  const ref = useRef<HTMLDivElement>(null)
-
-  // 只在用户本来就贴近底部时自动跟随，避免打断向上翻看
-  useLayoutEffect(() => {
-    const el = ref.current
-    if (!el) return
-    if (el.scrollHeight - el.scrollTop - el.clientHeight < 120) el.scrollTop = el.scrollHeight
-  }, [items])
-
-  return (
-    <div className={`feed ${region}`} ref={ref}>
-      {items.map((it) => (
-        <div className="msg" key={it.id}>
-          <Avatar name={it.user} avatars={avatars} />
-          <div className="mbody">
-            <span className="u">{it.user || fallbackName}</span>
-            <span className="t">{it.time}</span>
-            <br />
-            <span className="b">{it.text}</span>
-          </div>
-        </div>
-      ))}
-    </div>
-  )
+export function MessageFeed({ items, avatars, fallbackName, region }: { items: MsgItem[]; avatars: Record<string, string>; fallbackName: string; region: 'r1' | 'r2' }) {
+  return <MessageScrollerProvider autoScroll><MessageScroller><MessageScrollerViewport><MessageScrollerContent className="p-4">
+    {!items.length && <MessageScrollerItem messageId={`empty-${region}`}><Empty><EmptyHeader><EmptyMedia variant="icon"><MessageSquare /></EmptyMedia><EmptyTitle>等待新的声音</EmptyTitle><EmptyDescription>{region === 'r1' ? '主播侧的公屏消息会实时显示在这里。' : '观众的每一条互动，都会在这里汇集。'}</EmptyDescription></EmptyHeader></Empty></MessageScrollerItem>}
+    {items.map(it => <MessageScrollerItem key={it.id} messageId={String(it.id)}><Message><MessageAvatar><Avatar name={it.user} avatars={avatars} /></MessageAvatar><MessageContent><MessageHeader>{it.user || fallbackName}</MessageHeader><Bubble variant="muted"><BubbleContent><span className="dm-text">{it.text}</span></BubbleContent></Bubble><MessageFooter>{it.time}</MessageFooter></MessageContent></Message></MessageScrollerItem>)}
+  </MessageScrollerContent></MessageScrollerViewport><MessageScrollerButton aria-label="跳到最新消息" /></MessageScroller></MessageScrollerProvider>
 }

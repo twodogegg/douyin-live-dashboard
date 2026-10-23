@@ -1,10 +1,14 @@
 // 消息与 AI 摘要落 SQLite，看板刷新/重启后仍可回看历史。
 import Database from 'better-sqlite3'
+import { deliveryContent } from './dm-delivery.js'
 import { mediaIdentity } from './media-data.js'
 
 let db = null
+let accountPrefix = null
+const inAccount = id => accountPrefix === null || String(id).startsWith(accountPrefix)
 
 export function initDb(file) {
+  accountPrefix = null
   db = new Database(file)
   db.pragma('journal_mode = WAL')
   db.exec(
@@ -35,15 +39,23 @@ export function initDb(file) {
     conv_id TEXT PRIMARY KEY, blocked INTEGER DEFAULT 0, summary TEXT DEFAULT '',
     summary_cursor INTEGER DEFAULT 0, updated REAL DEFAULT 0,
     handled_key TEXT DEFAULT '', last_reply_at REAL DEFAULT 0)`)
+  if (!db.prepare('PRAGMA table_info(dm_memory)').all().some(c => c.name === 'profile')) db.exec("ALTER TABLE dm_memory ADD COLUMN profile TEXT DEFAULT ''")
+  for (const [name, type] of [['send_outcome', "TEXT DEFAULT ''"], ['send_text', "TEXT DEFAULT ''"], ['send_started', 'REAL DEFAULT 0'], ['send_before_ids', "TEXT DEFAULT '[]'"], ['send_partial', 'INTEGER DEFAULT 0'], ['send_receipt_id', "TEXT DEFAULT ''"]]) {
+    if (!db.prepare('PRAGMA table_info(dm_memory)').all().some(c => c.name === name)) db.exec(`ALTER TABLE dm_memory ADD COLUMN ${name} ${type}`)
+  }
+  db.prepare("UPDATE dm_memory SET send_outcome='unknown' WHERE send_outcome='pending'").run()
   // 补列保留历史；重新采集到的消息会补齐身份与媒体信息。
   const cols = db.prepare('PRAGMA table_info(dm_messages)').all().map((c) => c.name)
-  for (const col of ['kind', 'thumb', 'author', 'source_id', 'sender_id', 'sender_name', 'sender_avatar', 'sender_sec_uid', 'aweme_id', 'video_url', 'media_url', 'images']) {
+  for (const col of ['kind', 'thumb', 'author', 'source_id', 'sender_id', 'sender_name', 'sender_avatar', 'sender_sec_uid', 'aweme_id', 'video_url', 'media_url', 'images', 'transcript', 'platform', 'account_id', 'media_ref']) {
     if (!cols.includes(col)) db.exec(`ALTER TABLE dm_messages ADD COLUMN ${col} TEXT DEFAULT ''`)
   }
   const convCols = db.prepare('PRAGMA table_info(dm_conversations)').all().map((c) => c.name)
   for (const col of ['is_group', 'peer_sec_uid']) {
     if (!convCols.includes(col)) db.exec(`ALTER TABLE dm_conversations ADD COLUMN ${col} ${col === 'is_group' ? 'INTEGER DEFAULT 0' : "TEXT DEFAULT ''"}`)
   }
+  db.exec("CREATE TABLE IF NOT EXISTS dm_meta(key TEXT PRIMARY KEY, value TEXT)")
+  db.exec("CREATE TABLE IF NOT EXISTS dm_contacts(conv_id TEXT PRIMARY KEY, relationship TEXT DEFAULT '', address TEXT DEFAULT '', tone TEXT DEFAULT '', boundaries TEXT DEFAULT '', updated REAL DEFAULT 0)")
+  db.exec("CREATE TABLE IF NOT EXISTS dm_examples(id INTEGER PRIMARY KEY AUTOINCREMENT, conv_id TEXT NOT NULL, source_key TEXT NOT NULL, original TEXT NOT NULL, reply TEXT NOT NULL, created REAL NOT NULL)")
   return db
 }
 
@@ -86,6 +98,7 @@ export function windowMessages(wid) {
 
 // ---------- 私信 ----------
 export function dmUpsertConv(c) {
+  if (!inAccount(c.id)) throw new Error('会话不属于当前账号')
   db.prepare(
     'INSERT INTO dm_conversations(id, name, avatar, preview, last_ts, last_time, unread, updated, is_group, peer_sec_uid)' +
       ' VALUES(?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET' +
@@ -109,13 +122,13 @@ export function dmUpsertConv(c) {
 }
 
 export function dmGetConv(id) {
-  return db.prepare('SELECT * FROM dm_conversations WHERE id=?').get(id)
+  return inAccount(id) ? db.prepare('SELECT * FROM dm_conversations WHERE id=?').get(id) : undefined
 }
 
 export function dmListConvs(limit = 80) {
   return db
-    .prepare('SELECT c.*, COALESCE(m.blocked,0) AS auto_reply_blocked FROM dm_conversations c LEFT JOIN dm_memory m ON m.conv_id=c.id ORDER BY c.last_ts DESC LIMIT ?')
-    .all(limit)
+    .prepare('SELECT c.*, COALESCE(m.blocked,0) AS auto_reply_blocked FROM dm_conversations c LEFT JOIN dm_memory m ON m.conv_id=c.id WHERE (? IS NULL OR substr(c.id,1,length(?))=?) ORDER BY c.last_ts DESC LIMIT ?')
+    .all(accountPrefix, accountPrefix, accountPrefix, limit)
 }
 
 export function dmMigrateConv(oldId, id) {
@@ -129,18 +142,20 @@ export function dmMigrateConv(oldId, id) {
     dmSaveMemory(id, {
       blocked: oldMemory.blocked || current.blocked,
       summary: current.summary || oldMemory.summary,
+      profile: current.profile || oldMemory.profile,
       summary_cursor: current.summary ? current.summary_cursor : oldMemory.summary_cursor,
       updated: current.summary ? current.updated : oldMemory.updated,
       handled_key: current.last_reply_at > oldMemory.last_reply_at ? current.handled_key : oldMemory.handled_key || current.handled_key,
       last_reply_at: Math.max(current.last_reply_at, oldMemory.last_reply_at),
     })
+    for (const table of ['dm_contacts', 'dm_examples']) db.prepare(`UPDATE OR IGNORE ${table} SET conv_id=? WHERE conv_id=?`).run(id, oldId)
     db.prepare('DELETE FROM dm_memory WHERE conv_id=?').run(oldId)
     db.prepare('DELETE FROM dm_conversations WHERE id=?').run(oldId)
   })()
 }
 
 const DM_FIELDS = ['key', 'conv_id', 'direction', 'kind', 'text', 'thumb', 'author', 'ts', 'time',
-  'source_id', 'sender_id', 'sender_name', 'sender_avatar', 'sender_sec_uid', 'aweme_id', 'video_url', 'media_url', 'images']
+  'source_id', 'sender_id', 'sender_name', 'sender_avatar', 'sender_sec_uid', 'aweme_id', 'video_url', 'media_url', 'images', 'transcript', 'platform', 'account_id', 'media_ref']
 
 function readMsg(row) {
   if (!row) return row
@@ -151,8 +166,9 @@ function readMsg(row) {
 const fieldValue = (key, message) => key === 'images' ? JSON.stringify(message.images || []) : message[key] ?? ''
 
 export function dmGetMsg(key) {
-  return readMsg(db.prepare('SELECT * FROM dm_messages WHERE key=?').get(key)
-    || db.prepare('SELECT m.* FROM dm_messages m JOIN dm_message_aliases a ON a.message_key=m.key WHERE a.alias=?').get(key))
+  const row = db.prepare('SELECT * FROM dm_messages WHERE key=?').get(key)
+    || db.prepare('SELECT m.* FROM dm_messages m JOIN dm_message_aliases a ON a.message_key=m.key WHERE a.alias=?').get(key)
+  return row && inAccount(row.conv_id) ? readMsg(row) : undefined
 }
 
 export function dmFindMedia(message) {
@@ -165,6 +181,7 @@ export function dmFindMedia(message) {
 }
 
 export function dmSaveMsg(m, legacyKey = '') {
+  if (!inAccount(m.conv_id)) throw new Error('消息不属于当前账号')
   return db.transaction(() => saveMsg(m, legacyKey))()
 }
 
@@ -187,6 +204,13 @@ function saveMsg(m, legacyKey) {
   }
   old ||= legacy
   if (old && typeof old.images === 'string') readMsg(old)
+  if (old) {
+    m = { ...m }
+    for (const k of ['sender_name', 'sender_avatar', 'sender_sec_uid', 'thumb', 'author', 'aweme_id', 'video_url', 'media_url', 'transcript', 'platform', 'account_id', 'media_ref']) m[k] ||= old[k] || ''
+    if (!m.images?.length) m.images = old.images || []
+  }
+  if (m.kind === 'audio') m = { ...m, transcript: m.transcript || old?.transcript || '' }
+  if (old && typeof old.images === 'string') readMsg(old)
   if (old && !removed && DM_FIELDS.every(k => fieldValue(k, old) === fieldValue(k, m))) return null
   if (old) {
     db.prepare(`UPDATE dm_messages SET ${DM_FIELDS.map(k => `${k}=?`).join(',')} WHERE key=?`)
@@ -203,6 +227,7 @@ function saveMsg(m, legacyKey) {
 }
 
 export function dmListMsgs(convId, limit = 200) {
+  if (!inAccount(convId)) return []
   const rows = db
     .prepare(
       `SELECT rowid AS seq, ${DM_FIELDS.join(',')}` +
@@ -237,22 +262,91 @@ export function closeDb() {
 }
 
 export function dmGetMemory(convId) {
+  if (!inAccount(convId)) throw new Error('会话不属于当前账号')
   return db.prepare('SELECT * FROM dm_memory WHERE conv_id=?').get(convId)
-    || { conv_id: convId, blocked: 0, summary: '', summary_cursor: 0, updated: 0, handled_key: '', last_reply_at: 0 }
+    || { conv_id: convId, blocked: 0, summary: '', profile: '', summary_cursor: 0, updated: 0, handled_key: '', last_reply_at: 0 }
 }
 
 export function dmSaveMemory(convId, patch) {
-  const fields = ['blocked', 'summary', 'summary_cursor', 'updated', 'handled_key', 'last_reply_at'].filter(k => k in patch)
+  if (!inAccount(convId)) throw new Error('会话不属于当前账号')
+  const fields = ['blocked', 'summary', 'profile', 'summary_cursor', 'updated', 'handled_key', 'last_reply_at', 'send_outcome', 'send_text', 'send_started', 'send_before_ids', 'send_partial', 'send_receipt_id'].filter(k => k in patch)
   db.prepare('INSERT OR IGNORE INTO dm_memory(conv_id) VALUES(?)').run(convId)
   if (fields.length) db.prepare(`UPDATE dm_memory SET ${fields.map(k => `${k}=?`).join(',')} WHERE conv_id=?`).run(...fields.map(k => patch[k]), convId)
   return dmGetMemory(convId)
 }
 
 export function dmMemoryBatch(convId, cursor, limit = 40) {
+  if (!inAccount(convId)) return []
   return db.prepare('SELECT rowid AS seq, * FROM dm_messages WHERE conv_id=? AND rowid>? ORDER BY rowid LIMIT ?')
     .all(convId, cursor, limit).map(readMsg)
 }
 
 export function dmPendingMemories() {
-  return db.prepare('SELECT m.conv_id FROM dm_messages m LEFT JOIN dm_memory s ON s.conv_id=m.conv_id WHERE m.rowid>COALESCE(s.summary_cursor,0) GROUP BY m.conv_id').all()
+  return db.prepare('SELECT m.conv_id FROM dm_messages m LEFT JOIN dm_memory s ON s.conv_id=m.conv_id WHERE m.rowid>COALESCE(s.summary_cursor,0) GROUP BY m.conv_id').all().filter(row => inAccount(row.conv_id))
+}
+
+export function dmEditMemory(convId, { summary, profile, clear }) {
+  if (!dmGetConv(convId)) throw new Error('会话不存在')
+  const memory = dmGetMemory(convId)
+  const patch = { summary, profile, updated: Math.max(Date.now(), memory.updated + 1) }
+  if (clear) Object.assign(patch, { summary: '', profile: '', summary_cursor: db.prepare('SELECT COALESCE(MAX(rowid),0) AS cursor FROM dm_messages WHERE conv_id=?').get(convId).cursor })
+  return dmSaveMemory(convId, patch)
+}
+
+// 首次确认账号时一次性归属旧数据；此后切换账号按平台、账号、会话隔离。
+export function dmUseAccount(account) {
+  const prefix = account ? `douyin:${account}:` : 'unverified:'
+  if (account && !/^\d+$/.test(account)) throw new Error('账号身份无效')
+  if (account) {
+    db.transaction(() => {
+      const owner = db.prepare("SELECT value FROM dm_meta WHERE key='legacy_owner'").get()
+      if (!owner) {
+        accountPrefix = null
+        for (const row of db.prepare("SELECT id FROM dm_conversations WHERE id NOT LIKE 'douyin:%'").all()) dmMigrateConv(row.id, prefix + row.id)
+        db.prepare("INSERT INTO dm_meta(key,value) VALUES('legacy_owner',?)").run(account)
+      }
+    })()
+  }
+  accountPrefix = prefix
+}
+
+export function dmContact(id) {
+  if (!dmGetConv(id)) throw new Error('会话不存在')
+  return { relationship: '', address: '', tone: '', boundaries: '', updated: 0, ...db.prepare('SELECT * FROM dm_contacts WHERE conv_id=?').get(id), examples: db.prepare('SELECT * FROM dm_examples WHERE conv_id=? ORDER BY id DESC LIMIT 20').all(id) }
+}
+
+export function dmSaveContact(id, patch) {
+  if (!dmGetConv(id) || dmGetConv(id).is_group) throw new Error('请选择私聊联系人')
+  const keys = ['relationship', 'address', 'tone', 'boundaries']
+  for (const k of keys) if (typeof patch[k] !== 'string' || patch[k].length > 500) throw new Error('联系人资料每项最多 500 字')
+  db.prepare('INSERT INTO dm_contacts(conv_id,relationship,address,tone,boundaries,updated) VALUES(?,?,?,?,?,?) ON CONFLICT(conv_id) DO UPDATE SET relationship=excluded.relationship,address=excluded.address,tone=excluded.tone,boundaries=excluded.boundaries,updated=excluded.updated').run(id, ...keys.map(k => patch[k].trim()), Date.now())
+  return dmContact(id)
+}
+
+export function dmAddExample(id, { source_key, original, reply, confirmed }) {
+  if (confirmed !== true) throw new Error('请明确确认收录人工改写样例')
+  if (!dmGetConv(id) || dmGetConv(id).is_group) throw new Error('请选择私聊联系人')
+  const source = dmGetMsg(source_key)
+  if (!source || source.conv_id !== id || source.direction !== 'in') throw new Error('样例来源消息无效')
+  if (typeof original !== 'string' || typeof reply !== 'string' || !reply.trim() || reply.trim() === original.trim() || Math.max(original.length, reply.length) > 4000) throw new Error('请修改 AI 草稿后再收录，最多 4000 字')
+  db.prepare('INSERT INTO dm_examples(conv_id,source_key,original,reply,created) VALUES(?,?,?,?,?)').run(id, source_key, original, reply.trim(), Date.now())
+  return dmContact(id)
+}
+
+export function dmDeleteExample(id, exampleId) {
+  dmContact(id)
+  db.prepare('DELETE FROM dm_examples WHERE conv_id=? AND id=?').run(id, exampleId)
+  return dmContact(id)
+}
+
+export function dmReconcileSend(message) {
+  if (message.direction !== 'out' || !message.source_id) return
+  const memory = dmGetMemory(message.conv_id)
+  if (!['pending', 'unknown'].includes(memory.send_outcome)) return
+  let before = []
+  try { before = JSON.parse(memory.send_before_ids || '[]') } catch { return }
+  const result = deliveryContent(memory.send_text, message.text)
+  if (!before.includes(message.source_id) && result && message.ts * 1000 >= memory.send_started - 2000 && message.ts * 1000 <= memory.send_started + 60000) {
+    return dmSaveMemory(message.conv_id, { send_outcome: 'confirmed', send_text: '', send_partial: result === 'partial' ? 1 : 0, send_receipt_id: message.source_id })
+  }
 }

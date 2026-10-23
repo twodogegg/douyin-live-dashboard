@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { cleanReply, conversationMessages, DEFAULT_AGENT_RULES, replyPrompt } from './dm-context.js'
+import { cleanReply, conversationMessages, DEFAULT_AGENT_RULES, replyPrompt, timeContext, parseMemory } from './dm-context.js'
 
 test('文字和图片按原始顺序组成独立消息，原图直接传入同一次对话', async () => {
   const loaded = []
@@ -46,4 +46,38 @@ test('角色设定与功能规则分别传入，兼容只提供角色的旧配�
   assert.ok(edited.includes('# Agent 功能规则\n只回答当前会话的问题'))
   assert.ok(edited.includes('# 角色设定\n你是小禾，说话简短'))
   assert.ok(!edited.includes(DEFAULT_AGENT_RULES))
+})
+
+test('语音转写复用缓存，识别失败不得用占位符继续聊天', async () => {
+  let calls = 0
+  const messages = await conversationMessages([
+    { kind: 'audio', direction: 'in', transcript: '昨天说过了' },
+    { kind: 'text', direction: 'out', text: '记得的' },
+    { kind: 'audio', direction: 'in' },
+  ], null, async () => { calls++; return '[高兴] 明天见' })
+  assert.equal(calls, 1)
+  assert.ok(messages[0].content.includes('昨天说过了'))
+  assert.ok(messages[2].content.includes('[高兴] 明天见'))
+  await assert.rejects(conversationMessages([{ kind: 'audio' }], null), /尚未识别/)
+})
+
+test('跨日时间固定北京时间并关联原消息，画像必须保留依据且校验失败不吞错', () => {
+  const context = timeContext([{ ts: Date.parse('2026-10-22T15:50:00Z') / 1000, direction: 'in' }], new Date('2026-10-22T16:05:00Z'))
+  assert.ok(context.includes('2026年10月23日'))
+  assert.ok(context.includes('2026年10月22日'))
+  assert.ok(context.includes('00:05:00'))
+  assert.ok(context.includes('23:50:00'))
+  const profile = { facts: [], preferences: [{ text: '喜欢温柔的人', evidence: '我喜欢温柔的', updated_at: '2026-10-22' }], inferences: [] }
+  assert.deepEqual(JSON.parse(parseMemory(JSON.stringify({ summary: '聊了相处方式', profile })).profile), profile)
+  assert.throws(() => parseMemory('{"summary":"不完整"}'), /不完整/)
+  assert.throws(() => parseMemory('{"summary":"摘要","profile":{"facts":[{}],"preferences":[],"inferences":[]}}'), /依据/)
+})
+
+
+test('人工样例只注入确认后的改写，AI 原稿不作为说话示范', async () => {
+  const { contactContext } = await import('./dm-context.js')
+  const context = contactContext({ relationship: '朋友', examples: [{ source_key: '1', original: 'AI未确认原稿', reply: '本人改写确认的回复' }] }, () => ({ text: '对方的问题' }))
+  assert.match(context, /本人改写确认的回复/)
+  assert.match(context, /对方的问题/)
+  assert.doesNotMatch(context, /AI未确认原稿|original/)
 })

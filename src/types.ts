@@ -48,7 +48,8 @@ export type DmMsg = {
   key: string
   conv_id: string
   direction: 'in' | 'out'
-  kind?: 'text' | 'image' | 'video' | 'note' | 'unsupported'
+  kind?: 'text' | 'image' | 'video' | 'note' | 'audio' | 'unsupported'
+  transcript?: string
   text: string
   thumb?: string
   author?: string
@@ -97,6 +98,7 @@ export type DmGroup = {
 }
 
 export type DmStat = {
+  receiving?: boolean
   status: string
   running: boolean
   url?: string
@@ -108,9 +110,15 @@ export type DmStat = {
   sending: boolean
   auto_enabled?: boolean
   auto_status?: string
+  account_id?: string
+  receive_mode?: 'browser' | 'compare' | 'protocol'
+  send_mode?: 'browser'
+  phase?: 'receiving' | 'waiting' | 'generating' | 'sending' | 'retrying' | 'paused'
+  protocol?: { status: string; error: string; received: number; comparison?: { browser: number; protocol: number; matched: number } }
 }
 
 export type DmAgent = {
+  receive_mode?: 'browser' | 'compare' | 'protocol'
   system_prompt: string
   agent_rules: string
   temperature: number
@@ -121,8 +129,29 @@ export type DmAgent = {
 }
 
 export type DmMemory = {
+  send_partial?: number
+  send_receipt_id?: string
+  send_outcome?: 'pending' | 'unknown' | 'confirmed' | 'failed'
   conv_id: string
   blocked: number
   summary: string
+  profile: string
   updated: number
 }
+
+export type FishConfig = {
+  has_key: boolean
+  key?: string
+  tts_model: 'drama-3' | 's2.1-pro' | 's2.1-pro-free'
+  asr_model: string
+  reference_id: string
+  voice_name: string
+  speed: number
+  emotion: string
+}
+
+export type FishVoice = { id: string; name: string; description: string; state: string; languages: string[]; tags: string[]; visibility: string }
+export type VoiceAudio = { id: string; url: string; text?: string; duration_ms?: number }
+export type MemoryProfile = Record<'facts' | 'preferences' | 'inferences', { text: string; evidence: string; updated_at: string }[]>
+
+export type DmContact = { relationship: string; address: string; tone: string; boundaries: string; updated: number; examples: { id: number; source_key: string; original: string; reply: string; created: number }[] }
