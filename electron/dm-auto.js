@@ -42,8 +42,10 @@ export class DmAutoReply {
     const id = data.active_id
     const latest = data.messages?.at(-1)
     if (trigger && id && latest) {
+      // 视频、分享卡片不触发回复；它们只在需要上下文时被读取。
+      const replyable = latest.kind ? ['text', 'image', 'audio'].includes(latest.kind) : true
       if (latest.direction === 'out') this.cancel(id)
-      else if (this.seen.has(id) && inserted.some(m => m.conv_id === id && m.direction === 'in' && m.ts * 1000 >= this.since)) this.enqueue(id, now)
+      else if (replyable && this.seen.has(id) && inserted.some(m => m.conv_id === id && m.direction === 'in' && m.ts * 1000 >= this.since)) this.enqueue(id, now)
       this.seen.add(id)
     }
     this.baseline = true

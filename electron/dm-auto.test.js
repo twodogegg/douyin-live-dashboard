@@ -26,8 +26,8 @@ function setup() {
     },
   }
   const auto = new DmAutoReply(io)
-  const scan = (id = 'a', text = '新消息', direction = 'in', inserted = true) => {
-    const m = { key: `${id}:${text}`, conv_id: id, ts: now / 1000, text, direction }
+  const scan = (id = 'a', text = '新消息', direction = 'in', inserted = true, kind = 'text') => {
+    const m = { key: `${id}:${text}`, conv_id: id, ts: now / 1000, text, direction, kind }
     auto.observe({ active_id: id, conversations: [], messages: [m] }, inserted ? [m] : [])
   }
   return { auto, io, conf, sent, read, summarized, memory, scan, advance: ms => { now += ms } }
@@ -250,4 +250,25 @@ test('正在等待回执时的新消息仍替换任务，结果不确定才暂�
   s.advance(5000)
   await s.auto.tick()
   assert.deepEqual(s.sent, ['a'])
+})
+
+test('视频和分享卡片不触发回复，也不会清掉前面待回的文本', async () => {
+  const s = setup()
+  s.scan('a', '启动基线')
+  s.advance(6000)
+  await s.auto.tick()
+  s.scan('a', '在吗', 'in', true, 'text')
+  s.advance(1000)
+  // 文本之后紧接着来一条视频和一张卡片
+  s.scan('a', '[视频]', 'in', true, 'video')
+  s.advance(1000)
+  s.scan('a', '[卡片]', 'in', true, 'note')
+  s.advance(6000)
+  await s.auto.tick()
+  // 仍然只回复一次，且是那条文本触发的
+  assert.equal(s.sent.filter(id => id === 'a').length, 1)
+  // 视频本身不会再排一个任务
+  s.advance(6000)
+  await s.auto.tick()
+  assert.equal(s.sent.filter(id => id === 'a').length, 1)
 })

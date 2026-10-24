@@ -24,6 +24,7 @@ export function useDmStream() {
   const [wsDown, setWsDown] = useState(false)
   const [selecting, setSelecting] = useState(false)
   const [selectionError, setSelectionError] = useState('')
+  const [rebuild, setRebuild] = useState<{ done: number; total: number; label: string } | null>(null)
   const activeRef = useRef('')
   const selection = useRef(0)
   const accountEpoch = useRef(0)
@@ -112,6 +113,12 @@ export function useDmStream() {
         case 'dm_policy':
           setConvs(prev => prev.map(c => c.id === m.conv_id ? { ...c, auto_reply_blocked: Number(m.blocked) } : c))
           break
+        case 'dm_rebuild': {
+          const total = Number(m.total) || 0
+          const done = Number(m.done) || 0
+          setRebuild(total || done ? { done, total, label: String(m.label || '') } : null)
+          break
+        }
         case 'dm_memory':
           if (m.conv_id === activeRef.current) setMemory(m.memory as DmMemory)
           break
@@ -174,5 +181,5 @@ export function useDmStream() {
     }
   }, [refreshConvs, activateConv])
 
-  return { stat, convs, activeId, msgs, memory, wsDown, selecting, selectionError, openConv, activateConv, refreshConvs }
+  return { stat, convs, activeId, msgs, memory, wsDown, selecting, selectionError, rebuild, openConv, activateConv, refreshConvs }
 }

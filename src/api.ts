@@ -106,6 +106,10 @@ export const api = {
   dmMemory: (id: string) => req<DmMemory>(`/dm/memory/${encodeURIComponent(id)}`),
   dmSaveMemory: (id: string, patch: { summary?: string; profile?: MemoryProfile; clear?: boolean; expected_updated?: number }) =>
     req<{ ok: boolean; msg?: string }>(`/dm/memory/${encodeURIComponent(id)}`, post(patch)),
+  dmBackfillTranscripts: (id: string) =>
+    req<{ ok: boolean; total?: number; done?: number; failed?: number; msg?: string }>(`/dm/transcripts/${encodeURIComponent(id)}`, post()),
+  dmRebuildProfile: (id: string) =>
+    req<{ ok: boolean; msg?: string; memory?: DmMemory }>(`/dm/memory/${encodeURIComponent(id)}/rebuild`, post()),
   voiceConfig: () => req<FishConfig>('/dm/voice/config'),
   voiceSaveConfig: (c: FishConfig) => req<{ ok: boolean; msg?: string; config?: FishConfig }>('/dm/voice/config', post(c)),
   voiceList: (title: string, own: boolean, page: number, language: string) =>

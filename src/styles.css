@@ -190,6 +190,19 @@ h1, h2, h3, h4, p { margin: 0; }
 .profile-entry { border-left: 2px solid var(--border); padding: 5px 0 5px 10px; margin-top: 8px; }
 .profile-entry p { font-size: 11px; }
 .profile-entry small { display: block; font-size: 9px; color: var(--muted-foreground); margin-top: 5px; }
+.evidence-tag { display: inline-block; margin-right: 4px; padding: 0 4px; border: 1px solid var(--border); border-radius: 3px; font-size: 9px; line-height: 1.5; }
+.profile-caption { margin: -8px 0 12px; }
+.profile-actions { display: flex; flex-direction: column; gap: 6px; margin-top: 14px; align-items: flex-start; }
+.evidence-jump { height: auto; padding: 0; margin-left: 6px; font-size: 9px; vertical-align: baseline; }
+.evidence-jump > svg { width: 10px; height: 10px; }
+.inspect-list { display: flex; flex-direction: column; gap: 10px; max-height: 52vh; overflow-y: auto; }
+.inspect-evidence { border: 1px dashed var(--border); border-radius: 8px; padding: 10px; }
+.inspect-evidence small, .inspect-run small { font-size: 10px; color: var(--muted-foreground); }
+.inspect-evidence p { font-size: 11px; line-height: 1.7; margin-top: 6px; white-space: pre-wrap; }
+.inspect-run { border-left: 2px solid var(--border); padding: 4px 0 4px 10px; }
+.inspect-run.me { border-left-color: var(--primary); }
+.inspect-run.user { border-left-color: color-mix(in oklab, var(--primary) 35%, transparent); }
+.inspect-run p { font-size: 12px; line-height: 1.7; margin-top: 4px; white-space: pre-wrap; overflow-wrap: anywhere; }
 .helper-text, .panel-hint { color: var(--muted-foreground); font-size: 11px; line-height: 1.8; }
 .panel-hint { background: var(--muted); padding: 12px; border-radius: 8px; margin-top: 22px; }
 .memory-summary { font-size: 12px; line-height: 1.9; white-space: pre-wrap; margin-bottom: 14px; }

@@ -168,6 +168,14 @@ export function startServer({ port = 0, staticDir }) {
       const example = p.match(/^\/dm\/examples\/(.+)$/)
       if (example && req.method === 'POST') return json(res, { ok: true, contact: db.dmAddExample(decodeURIComponent(example[1]), await readBody(req)) })
       if (example && req.method === 'DELETE') return json(res, { ok: true, contact: db.dmDeleteExample(decodeURIComponent(example[1]), Number(url.searchParams.get('id'))) })
+      const rebuild = p.match(/^\/dm\/memory\/(.+)\/rebuild$/)
+      if (rebuild && req.method === 'POST') {
+        const body = await readBody(req).catch(() => ({}))
+        return json(res, await im.rebuildProfile(decodeURIComponent(rebuild[1]), { reset: body?.reset !== false }))
+      }
+      if (p === '/dm/debug/memory' && req.method === 'GET') return json(res, { ok: true, raw: im.lastMemoryOutput() })
+      const transcript = p.match(/^\/dm\/transcripts\/(.+)$/)
+      if (transcript && req.method === 'POST') return json(res, { ok: true, ...await im.backfillTranscripts(decodeURIComponent(transcript[1])) })
       const dmMemory = p.match(/^\/dm\/memory\/(.+)$/)
       if (dmMemory && req.method === 'GET') return json(res, db.dmGetMemory(decodeURIComponent(dmMemory[1])))
       if (dmMemory && req.method === 'POST') {

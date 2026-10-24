@@ -209,3 +209,18 @@ test('已成功发出的首段自动解除不确定状态，原有同文消息�
   assert.equal(saved.send_receipt_id, 'new')
   assert.equal(saved.send_text, '')
 })
+
+test('历史分段按旧到新读取，可跨游标重扫全部消息', () => {
+  db.initDb(':memory:')
+  const conv = 'rebuild'
+  db.dmUpsertConv({ id: conv, name: '重扫' })
+  db.dmSaveMsg({ key: conv + ':m:1', conv_id: conv, direction: 'in', kind: 'text', text: '第一条', ts: 1 })
+  db.dmSaveMsg({ key: conv + ':m:2', conv_id: conv, direction: 'out', kind: 'text', text: '第二条', ts: 2 })
+  db.dmSaveMsg({ key: conv + ':m:3', conv_id: conv, direction: 'in', kind: 'text', text: '第三条', ts: 3 })
+  db.dmSaveMemory(conv, { summary_cursor: db.dmCountMsgs(conv) })
+  const chunk = db.dmHistoryChunk(conv, 0, 2)
+  assert.deepEqual(chunk.map(m => m.text), ['第二条', '第三条'])
+  const older = db.dmHistoryChunk(conv, chunk[0].seq, 2)
+  assert.deepEqual(older.map(m => m.text), ['第一条'])
+  assert.equal(db.dmHistoryChunk(conv, older[0].seq, 2).length, 0)
+})

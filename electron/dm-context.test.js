@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { cleanReply, conversationMessages, DEFAULT_AGENT_RULES, replyPrompt, timeContext, parseMemory } from './dm-context.js'
+import { cleanReply, conversationMessages, speakerMessages, DEFAULT_AGENT_RULES, replyPrompt, timeContext, parseMemory } from './dm-context.js'
 
 test('文字和图片按原始顺序组成独立消息，原图直接传入同一次对话', async () => {
   const loaded = []
@@ -17,6 +17,19 @@ test('文字和图片按原始顺序组成独立消息，原图直接传入同�
     { role: 'user', content: [{ type: 'image_url', image_url: { url: 'data:image/png;base64,b' } }] },
   ])
   assert.deepEqual(loaded, ['a', 'b'])
+})
+
+test('整理画像时每条消息都标明是本人还是对方，图片也一样', async () => {
+  const messages = await speakerMessages([
+    { direction: 'out', kind: 'text', text: '我是杭州人' },
+    { key: 'a', direction: 'in', kind: 'image' },
+    { direction: 'in', kind: 'text', text: '我不喜欢被叫小名' },
+  ], async () => 'data:image/png;base64,a', null)
+  assert.deepEqual(messages, [
+    { role: 'assistant', content: '[本人] 我是杭州人' },
+    { role: 'user', content: [{ type: 'text', text: '[对方]' }, { type: 'image_url', image_url: { url: 'data:image/png;base64,a' } }] },
+    { role: 'user', content: '[对方] 我不喜欢被叫小名' },
+  ])
 })
 
 test('只有一张图片时，也是一条完整的 user 图片消息', async () => {
@@ -70,7 +83,33 @@ test('跨日时间固定北京时间并关联原消息，画像必须保留依�
   const profile = { facts: [], preferences: [{ text: '喜欢温柔的人', evidence: '我喜欢温柔的', updated_at: '2026-10-22' }], inferences: [] }
   assert.deepEqual(JSON.parse(parseMemory(JSON.stringify({ summary: '聊了相处方式', profile })).profile), profile)
   assert.throws(() => parseMemory('{"summary":"不完整"}'), /不完整/)
-  assert.throws(() => parseMemory('{"summary":"摘要","profile":{"facts":[{}],"preferences":[],"inferences":[]}}'), /依据/)
+  // 单条缺字段只跳过该条，不再让整批记忆作废（原来会一直报“记忆格式无效”）。
+  const partial = parseMemory('{"summary":"摘要","profile":{"facts":[{"text":"有内容的","evidence":"依据"},{}],"preferences":[],"inferences":[]}}')
+  assert.equal(JSON.parse(partial.profile).facts.length, 1)
+  assert.ok(JSON.parse(partial.profile).facts[0].updated_at)
+})
+
+test('模型返回带代码围栏或前后说明时仍能取出 JSON', () => {
+  const body = '{"summary":"摘要","profile":{"facts":[],"preferences":[],"inferences":[]}}'
+  assert.equal(parseMemory('```json\n' + body + '\n```').summary, '摘要')
+  assert.equal(parseMemory('好的，结果如下：\n' + body + '\n以上。').summary, '摘要')
+  assert.throws(() => parseMemory('完全不是 JSON'), /格式无效/)
+})
+
+test('画像过滤一次性事件，只留长期特征', () => {
+  const profile = {
+    facts: [
+      { text: '2026-10-24凌晨1点54分发语音测试', evidence: '听得够吗', updated_at: '2026-10-24' },
+      { text: '用户于2026年10月25日分享长文', evidence: '跟着电影学运镜', updated_at: '2026-10-25' },
+      { text: '用户在杭州读视觉传达', evidence: '我在杭州念视觉传达', updated_at: '2026-10-23' },
+      { text: '习惯用短句确认对方在不在', evidence: '在？/在吗。', updated_at: '2026-10-24' },
+    ],
+    preferences: [], inferences: [],
+  }
+  const parsed = parseMemory(JSON.stringify({ summary: '摘要', profile }))
+  const facts = JSON.parse(parsed.profile).facts.map(item => item.text)
+  assert.deepEqual(facts, ['用户在杭州读视觉传达', '习惯用短句确认对方在不在'])
+  assert.equal(parsed.dropped, 2)
 })
 
 

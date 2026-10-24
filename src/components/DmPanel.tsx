@@ -21,6 +21,7 @@ import { useDmStream } from '../hooks/useDmStream'
 import { DmSettingsDialog } from './DmSettingsDialog'
 import { VoiceDialog } from './VoiceDialog'
 import { DmMemoryPanel } from './DmMemoryPanel'
+import { findEvidence } from '../lib/evidence'
 import type { DmGroup, DmGroupMember, DmMedia, DmMsg } from '../types'
 
 function ConvAvatar({ name, url }: { name: string; url: string | null }) {
@@ -163,7 +164,8 @@ function MediaDialog({ message, onClose }: { message: DmMsg; onClose: () => void
 }
 
 export function DmPanel() {
-  const { stat, convs, activeId, msgs, memory, wsDown, selecting, selectionError, openConv, activateConv, refreshConvs } = useDmStream()
+  const { stat, convs, activeId, msgs, memory, wsDown, selecting, selectionError, rebuild, openConv, activateConv, refreshConvs } = useDmStream()
+  const rebuildLabel = rebuild ? (rebuild.label || (rebuild.total ? `已整理 ${rebuild.done} / ${rebuild.total} 条消息` : `已整理 ${rebuild.done} 条消息`)) : ''
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [voiceOpen, setVoiceOpen] = useState(false)
   const [text, setText] = useState('')
@@ -395,7 +397,7 @@ export function DmPanel() {
               </div>
             </>}
           </section>
-          {activeId && showProfile && <div className="contact-wrapper"><Button variant="ghost" size="icon-sm" className="contact-close" aria-label="关闭联系人资料" onClick={() => setShowProfile(false)}><X /></Button><DmMemoryPanel key={activeId} id={activeId} memory={memory} name={active?.name || ''} isGroup={!!active?.is_group} refreshKey={exampleVersion} /></div>}
+          {activeId && showProfile && <div className="contact-wrapper"><Button variant="ghost" size="icon-sm" className="contact-close" aria-label="关闭联系人资料" onClick={() => setShowProfile(false)}><X /></Button><DmMemoryPanel key={activeId} id={activeId} memory={memory} name={active?.name || ''} isGroup={!!active?.is_group} refreshKey={exampleVersion} progress={rebuildLabel} onInspect={evidence => findEvidence(activeId, evidence)} /></div>}
         </main>
         <div className="workspace-footnote"><span className={cn('status-dot', !stat.running && 'idle')} />{wsDown ? '服务连接断开，正在重连…' : stat.running && !stat.receiving ? stat.status : stat.auto_status || `${receiveLabel} · ${phaseLabels[phase]}`}{stat.receive_mode === 'compare' && stat.protocol?.comparison && <span>协议 {stat.protocol.comparison.protocol} · 已匹配 {stat.protocol.comparison.matched}</span>}{stat.protocol?.error && <span className="error-text">{stat.protocol.error}</span>}<span>最近同步 {stat.last_scan || '—'}</span></div>
       </div>

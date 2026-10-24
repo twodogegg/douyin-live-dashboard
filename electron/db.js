@@ -281,6 +281,21 @@ export function dmMemoryBatch(convId, cursor, limit = 40) {
     .all(convId, cursor, limit).map(readMsg)
 }
 
+export function dmCountMsgs(convId) {
+  return inAccount(convId) ? db.prepare('SELECT COUNT(*) AS n FROM dm_messages WHERE conv_id=?').get(convId).n : 0
+}
+
+// 从旧到新取一段历史消息，用于分段重建画像（不受摘要游标影响）。
+export function dmHistoryChunk(convId, before = 0, size = 60) {
+  if (!inAccount(convId)) return []
+  if (before > 0) {
+    return db.prepare('SELECT rowid AS seq, * FROM dm_messages WHERE conv_id=? AND rowid<? ORDER BY rowid DESC LIMIT ?')
+      .all(convId, before, size).reverse().map(readMsg)
+  }
+  return db.prepare('SELECT rowid AS seq, * FROM dm_messages WHERE conv_id=? ORDER BY rowid DESC LIMIT ?')
+    .all(convId, size).reverse().map(readMsg)
+}
+
 export function dmPendingMemories() {
   return db.prepare('SELECT m.conv_id FROM dm_messages m LEFT JOIN dm_memory s ON s.conv_id=m.conv_id WHERE m.rowid>COALESCE(s.summary_cursor,0) GROUP BY m.conv_id').all().filter(row => inAccount(row.conv_id))
 }
