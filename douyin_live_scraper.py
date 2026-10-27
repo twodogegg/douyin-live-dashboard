@@ -110,6 +110,51 @@ EXTRACT_JS = r"""
     return v;
   };
 
+  // 进房/关注是独立事件。普通聊天即使写着「关注了主播」，也不能被当成关注。
+  const eventSelector = '.webcast-chatroom___item, .webcast-chatroom___bottom-message, .webcast-chatroom___bottom_message';
+  const roomEvent = el => {
+    if (el.querySelector('.webcast-chatroom__room-message, img[src*="webcast_anchor_badge"], .cL385mHb')) return null;
+    const full = clean(el.innerText || el.textContent);
+    const match = full.match(/^(.*?)\s*(进入了直播间|进入直播间|来到了直播间|来了|关注了主播|关注了你|关注了直播间)[！!。]?$/);
+    if (!match) return null;
+    const name = el.querySelector('.v8LY0gZF, [data-e2e="user-name"], [class*="nickname"], [class*="userName"]');
+    const user = clean(name?.textContent || match[1]).replace(/[:：]$/, '');
+    if (!user || user.length > 80) return null;
+    return { kind: match[2].startsWith('关注') ? 'follow' : 'join', user: user };
+  };
+  if (!S.eventQueue) {
+    S.eventQueue = [];
+    S.eventValues = new WeakMap();
+    S.eventRecent = new Map();
+    const scan = (node, emit = true) => {
+      const el = node.nodeType === 1 ? node : node.parentElement;
+      if (!el) return;
+      const roots = new Set([el.closest(eventSelector), ...el.querySelectorAll(eventSelector)]);
+      roots.forEach(root => {
+        if (!root) return;
+        const event = roomEvent(root);
+        const signature = event ? JSON.stringify([event.kind, event.user]) : '';
+        if (S.eventValues.get(root) === signature) return;
+        S.eventValues.set(root, signature);
+        if (!event) return;
+        const now = Date.now();
+        const duplicate = now - (S.eventRecent.get(signature) || 0) < 3000;
+        S.eventRecent.set(signature, now);
+        if (S.eventRecent.size > 1000) S.eventRecent.delete(S.eventRecent.keys().next().value);
+        if (emit && !duplicate) {
+          S.eventQueue.push({ ...event, id: 'event:' + (++S.seq), time: new Date(now).toTimeString().slice(0, 8) });
+          S.eventQueue = S.eventQueue.slice(-200);
+        }
+      });
+    };
+    scan(document.body, false); // 已存在的历史提示只建立基线，不算本次的新事件。
+    S.eventObserver = new MutationObserver(mutations => mutations.forEach(m => {
+      scan(m.target);
+      m.addedNodes.forEach(node => scan(node));
+    }));
+    S.eventObserver.observe(document.body, { childList: true, subtree: true, characterData: true });
+  }
+
   // 行号已在 MutationObserver 里定好；这里只为「挂观察之前就存在的元素」补一个行号。
   const lineOf = el => {
     let ln = S.line.get(el);
@@ -137,6 +182,7 @@ EXTRACT_JS = r"""
     list.querySelectorAll('.webcast-chatroom___item').forEach(it => {
       if (it.closest('.webcast-chatroom___bottom-message, .webcast-chatroom___bottom_message')) return;
       if (it.querySelector('.webcast-chatroom__room-message')) return; // 平台公告不是聊天消息
+      if (roomEvent(it)) return;
       const full = clean(it.innerText);
       if (!full) return;
       const userEl = it.querySelector('.v8LY0gZF');
@@ -167,7 +213,7 @@ EXTRACT_JS = r"""
     const name = norm(label);
     if (name && !avatars[name]) avatars[name] = im.src.replace('/1080x1080/', '/100x100/');
   });
-  return { r1: r1, r2: r2, avatars: avatars };
+  return { r1: r1, r2: r2, avatars: avatars, events: S.eventQueue.splice(0) };
 }
 """
 

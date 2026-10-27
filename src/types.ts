@@ -51,6 +51,8 @@ export type StageState = {
   status: 'idle' | 'thinking' | 'synthesizing' | 'ready' | 'error'
   error: string
   last_reply: StageReply | null
+  usage: { prompt_tokens: number; completion_tokens: number; total_tokens: number; requests: number; unreported: number }
+  activity: { joins: number; follows: number; events: { id: string; kind: 'join' | 'follow'; user: string; time: string }[] }
 }
 
 // ---------- 私信 ----------

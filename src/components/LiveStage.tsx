@@ -15,7 +15,6 @@ function StageBoard({ messages, stat, stage, reply, speaking = false, preview = 
   messages: MsgItem[]; stat: Stat; stage: StageState | null; reply: StageReply | null; speaking?: boolean; preview?: boolean; wsDown?: boolean
 }) {
   const feed = useRef<HTMLDivElement>(null)
-  const [animationFailed, setAnimationFailed] = useState(false)
   const name = stage?.config.name || '小鲸'
   useEffect(() => { if (feed.current) feed.current.scrollTop = feed.current.scrollHeight }, [messages])
 
@@ -23,7 +22,7 @@ function StageBoard({ messages, stat, stage, reply, speaking = false, preview = 
     <div className="stage-orbit stage-orbit-one" /><div className="stage-orbit stage-orbit-two" />
     <header className="stage-masthead">
       <div className="stage-identity"><span className="stage-logo"><Fish /></span><div><strong>{name}的深海电台</strong><span>把日常说给大海听</span></div></div>
-      <div className={`stage-live-tag${!stage?.config.enabled || wsDown ? ' is-idle' : ''}`}><Radio />{wsDown ? '连接已断开' : stage?.config.enabled ? '互动已开启' : preview ? '画面预览' : '等待开播'}</div>
+      <div className={`stage-live-tag${!stat.room_id || !stage?.config.enabled || wsDown ? ' is-idle' : ''}`}><Radio />{wsDown ? '连接已断开' : !stat.room_id ? '未连接直播间' : stat.status !== '已进房' ? stat.status : stage?.config.enabled ? '互动已开启' : preview ? '采集预览 · 互动已暂停' : '采集中 · 互动已暂停'}</div>
     </header>
     <div className="stage-main">
       <section className="stage-character-area" aria-label="AI 主播">
@@ -33,13 +32,13 @@ function StageBoard({ messages, stat, stage, reply, speaking = false, preview = 
           <p>{reply?.text || greeting}</p>
         </div>
         <div className="stage-character-glow" />
-        {animationFailed
-          ? <img className="stage-character" src="/live-stage/host-wave-poster.png" alt="小鲸挥手打招呼" />
-          : <video className="stage-character" src="/live-stage/host-wave.webm" poster="/live-stage/host-wave-poster.png" autoPlay loop muted playsInline preload="auto" aria-label="小鲸挥手打招呼动画" onError={() => setAnimationFailed(true)} />}
-        <div className="stage-character-label"><span className="stage-voice-bars"><i /><i /><i /><i /></span>{speaking ? `${name}正在说话` : stage ? statusText[stage.status] : '等你的一条弹幕'}</div>
+        <img className="stage-character" src="/live-stage/host-maid.png" alt="蓝发鲸鱼女仆小鲸" />
+        <div className="stage-character-label"><span className="stage-voice-bars"><i /><i /><i /><i /></span>{speaking ? `${name}正在说话` : !stat.room_id && !reply ? '等待连接直播间' : stage ? statusText[stage.status] : '等你的一条弹幕'}</div>
       </section>
       <aside className="stage-chat">
         <div className="stage-chat-heading"><MessageCircle /><strong>海底来信</strong><span>{messages.length ? `${messages.length} 条互动` : '实时弹幕'}</span></div>
+        <div className="stage-activity-counts"><span>进房 <b>{stage?.activity?.joins || 0}</b></span><span>关注 <b>{stage?.activity?.follows || 0}</b></span><small>本次连接检测到</small></div>
+        {!!stage?.activity?.events.length && <div className="stage-activity-feed" role="log" aria-label="进房与关注提醒">{stage.activity.events.slice(-3).map(event => <p key={event.id}><time>{event.time}</time><span>{event.user}</span>{event.kind === 'follow' ? '关注了主播' : '进入了直播间'}</p>)}</div>}
         <div ref={feed} className="stage-chat-feed" role="log" aria-label="观众实时消息">
           {messages.slice(-40).map((item, i) => <div className="stage-chat-message" key={`${item.id}-${i}`}><div className={`stage-viewer-avatar color-${i % 4}`}>{(item.user || '观众').slice(0, 1)}</div><div><span>{item.user || '观众'}</span><p>{item.text}</p></div></div>)}
           {!messages.length && <div className="stage-chat-empty"><Waves /><strong>海面静悄悄的</strong><p>{stat.room_id ? '等待第一条观众消息' : '连接直播间，收听大家的来信'}</p></div>}
@@ -47,7 +46,7 @@ function StageBoard({ messages, stat, stage, reply, speaking = false, preview = 
         <div className="stage-chat-footer"><span />每一条消息，都有机会被听见</div>
       </aside>
     </div>
-    <footer className="stage-footer"><span><Waves /> 你的树洞，今天也在线</span><span>AI 虚拟主播 · 弹幕互动</span></footer>
+    <footer className="stage-footer"><span><Waves /> 你的树洞，今天也在线</span><span className="stage-token-usage" title="本次应用运行期间的主播 AI 回复用量，包含试播；重启后清零，不包含 TTS">Token <b>{(stage?.usage?.total_tokens || 0).toLocaleString()}</b> · 输入 {(stage?.usage?.prompt_tokens || 0).toLocaleString()} / 输出 {(stage?.usage?.completion_tokens || 0).toLocaleString()}{!!stage?.usage?.unreported && ` · ${stage.usage.unreported} 次未返回用量`}</span></footer>
   </div>
 }
 
@@ -100,6 +99,7 @@ export function LiveStageStudio({ messages, stat, stage, reply, wsDown, onOpenSe
       </section>
       <aside className="stage-controls">
         <div className="stage-control-heading"><Settings2 /><h2>互动设置</h2><span>{stage ? stage.config.enabled ? '运行中' : '已暂停' : '未连接'}</span></div>
+        <div className="stage-usage-note">主播回复累计 {(stage?.usage?.total_tokens || 0).toLocaleString()} token · {stage?.usage?.requests || 0} 次调用<small>本次运行累计，含试播；重启后清零。进房与关注统计以页面实际显示的事件为准。</small>{!!stage?.usage?.unreported && <small>{stage.usage.unreported} 次调用未返回 token 用量，未计入累计。</small>}</div>
         <fieldset disabled={busy || !draft}>
           <label htmlFor="stage-name">主播名字</label><input id="stage-name" value={draft?.name || ''} maxLength={30} onChange={e => draft && setDraft({ ...draft, name: e.target.value })} />
           <label htmlFor="stage-persona">主播人设</label><textarea id="stage-persona" rows={5} value={draft?.system_prompt || ''} maxLength={6000} onChange={e => draft && setDraft({ ...draft, system_prompt: e.target.value })} />

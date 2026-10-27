@@ -39,6 +39,8 @@
 .stage-test p { margin: 5px 0 11px; font-size: 10px; color: var(--dim); }
 .stage-test > button { width: 100%; margin-top: 10px; font-size: 11px; }
 .stage-control-note { color: var(--dim); font-size: 10px; line-height: 1.8; margin-top: 16px; overflow-wrap: anywhere; }
+.stage-usage-note { grid-column: 1 / -1; padding: 10px 12px; margin-bottom: 12px; border-radius: 8px; background: var(--muted); font-size: 11px; }
+.stage-usage-note small { display: block; margin-top: 4px; font-size: 10px; line-height: 1.7; color: var(--dim); }
 
 .stage-board { width: 100%; height: 100%; position: relative; isolation: isolate; display: flex; flex-direction: column; color: #eef7ff; overflow: hidden; font-family: 'Geist Variable', 'PingFang SC', 'Microsoft YaHei', sans-serif; background: radial-gradient(ellipse at 18% 80%, #21527470, transparent 45%), radial-gradient(ellipse at 70% 0%, #23375c, transparent 65%), #0b1932; font-size: 1.2cqw; line-height: 1.6; }
 .stage-board * { box-sizing: border-box; }
@@ -80,6 +82,15 @@
 .stage-chat-heading > svg { width: 1.3cqw; height: 1.3cqw; color: #91c6de; }
 .stage-chat-heading strong { font-size: 1.2cqw; font-weight: 500; }
 .stage-chat-heading > span { margin-left: auto; font-size: .75cqw; color: #809ab7; }
+.stage-activity-counts { display: flex; gap: 1cqw; align-items: center; padding: .8cqw 0; font-size: .8cqw; color: #9db3cb; border-bottom: 1px solid #abc9e216; }
+.stage-activity-counts b { color: #b3e5d9; font-weight: 500; }
+.stage-activity-counts small { margin-left: auto; font-size: .65cqw; }
+.stage-activity-feed { flex-shrink: 0; padding: .6cqw 0; border-bottom: 1px solid #abc9e216; font-size: .8cqw; color: #b3e5d9; }
+.stage-activity-feed p { margin: .25cqw 0; overflow-wrap: anywhere; }
+.stage-activity-feed time { color: #809ab7; margin-right: .5cqw; }
+.stage-activity-feed span { margin-right: .4cqw; }
+.stage-token-usage { font-variant-numeric: tabular-nums; text-align: right; }
+.stage-token-usage b { color: #b3e5d9; font-weight: 500; }
 .stage-chat-feed { overflow-y: auto; min-height: 0; flex: 1; scrollbar-width: none; padding: 1.3cqw 0; }
 .stage-chat-message { display: flex; gap: .8cqw; margin-bottom: 1.45cqw; align-items: start; }
 .stage-viewer-avatar { flex-shrink: 0; display: grid; place-items: center; width: 2.4cqw; height: 2.4cqw; font-size: .9cqw; color: #c0e6ed; border: 1px solid #84c5d72a; border-radius: 50%; background: #315f7245; }
@@ -140,6 +151,8 @@
   .stage-output .stage-chat-heading > svg { width: 3cqw; height: 3cqw; }
   .stage-output .stage-chat-heading strong { font-size: 3cqw; }
   .stage-output .stage-chat-heading > span { font-size: 2cqw; }
+  .stage-output .stage-activity-counts, .stage-output .stage-activity-feed { font-size: 2cqw; padding: 1.5cqw 0; }
+  .stage-output .stage-activity-counts small { font-size: 1.6cqw; }
   .stage-output .stage-chat-feed { padding-top: 3cqw; }
   .stage-output .stage-chat-message { gap: 2cqw; margin-bottom: 3cqw; }
   .stage-output .stage-viewer-avatar { width: 6cqw; height: 6cqw; font-size: 2.4cqw; }
@@ -149,4 +162,5 @@
   .stage-output .stage-chat-empty strong { font-size: 3cqw; }
   .stage-output .stage-chat-empty p, .stage-output .stage-chat-footer { font-size: 2cqw; }
   .stage-output .stage-footer { padding: 5% 6%; font-size: 2cqw; }
+  .stage-output .stage-token-usage { max-width: 60%; }
 }

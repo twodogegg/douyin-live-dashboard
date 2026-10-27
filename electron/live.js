@@ -444,6 +444,10 @@ async function scraperTaskRun(rid) {
         }
       }
 
+      for (const event of data.events || []) {
+        broadcast({ ...event, id: `${sessionNo}:${event.id}`, type: 'room_event' })
+      }
+
       for (const region of ['r1', 'r2']) {
         for (const m of data[region] || []) {
           const key = `${region}:${m.id}`

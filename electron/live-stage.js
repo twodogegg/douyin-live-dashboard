@@ -24,8 +24,11 @@ export function createLiveStage({ file, chat, synthesize, broadcast, readiness, 
   let active = false
   let timer = null
   let roomId = ''
+  const usage = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0, requests: 0, unreported: 0 }
+  let activity = { joins: 0, follows: 0, events: [] }
+  const eventIds = new Set()
 
-  const snapshot = () => ({ type: 'stage_status', config: { ...config }, status, error, last_reply: lastReply })
+  const snapshot = () => ({ type: 'stage_status', config: { ...config }, status, error, last_reply: lastReply, usage: { ...usage }, activity: { ...activity, events: [...activity.events] } })
   const report = () => broadcast(snapshot())
   const reset = () => {
     epoch++
@@ -50,11 +53,22 @@ export function createLiveStage({ file, chat, synthesize, broadcast, readiness, 
     try {
       const available = readiness()
       if (!available.ai) throw new Error('请先在模型与设置中配置 AI 模型和密钥')
-      const text = (await chat([
+      const result = await chat([
         { role: 'system', content: `你的名字是${config.name}。${config.system_prompt}` },
         ...history,
         { role: 'user', content: JSON.stringify({ viewer: message.user, message: message.text }) },
-      ], { temperature: 0.8, max_tokens: 400 })).trim().slice(0, 180)
+      ], { temperature: 0.8, max_tokens: 400 })
+      usage.requests++
+      const count = value => Number.isSafeInteger(value) && value >= 0 ? value : null
+      const input = count(result.usage?.prompt_tokens)
+      const output = count(result.usage?.completion_tokens)
+      const total = count(result.usage?.total_tokens) ?? (input !== null && output !== null ? input + output : null)
+      usage.prompt_tokens += input ?? 0
+      usage.completion_tokens += output ?? 0
+      usage.total_tokens += total ?? 0
+      if (total === null) usage.unreported++
+      report() // 暂停期间完成的请求同样已经消耗 token。
+      const text = result.text.trim().slice(0, 180)
       if (token !== epoch) return null
       if (!text) throw new Error('AI 没有返回回复，请重试')
       let audio = null
@@ -119,7 +133,22 @@ export function createLiveStage({ file, chat, synthesize, broadcast, readiness, 
     observe(message) {
       if (message.type === 'reset') return reset()
       if (message.type === 'stat') {
-        if (message.room_id !== roomId) { roomId = message.room_id; recent.clear(); reset() }
+        if (message.room_id !== roomId) {
+          roomId = message.room_id
+          recent.clear()
+          eventIds.clear()
+          activity = { joins: 0, follows: 0, events: [] }
+          reset()
+        }
+        return
+      }
+      if (message.type === 'room_event') {
+        if (!['join', 'follow'].includes(message.kind) || !message.user?.trim() || !message.id || eventIds.has(message.id)) return
+        eventIds.add(message.id)
+        if (eventIds.size > 1000) eventIds.delete(eventIds.values().next().value)
+        activity[message.kind === 'join' ? 'joins' : 'follows']++
+        activity.events = [...activity.events, { id: message.id, kind: message.kind, user: message.user, time: message.time }].slice(-20)
+        report()
         return
       }
       if (message.type !== 'r2' || !message.user?.trim() || !message.text?.trim()) return

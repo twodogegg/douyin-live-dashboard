@@ -83,7 +83,10 @@ export function startServer({ port = 0, staticDir, stageFile, showStage }) {
   const stageAudio = createStageAudio(fish.streamSpeech)
   const stage = createLiveStage({
     file: stageFile,
-    chat: live.chatComplete,
+    chat: async (messages, options) => {
+      const data = await live.chatRequest(messages, options)
+      return { text: data.choices?.[0]?.message?.content || '', usage: data.usage }
+    },
     synthesize: text => stageAudio.prepare(text),
     cancelAudio: stageAudio.clear,
     broadcast: send,

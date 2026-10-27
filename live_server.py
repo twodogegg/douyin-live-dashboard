@@ -418,6 +418,8 @@ async def scraper_task(rid: str):
                 if AVATARS.get(name) != url:
                     AVATARS[name] = url
                     av_dirty = True
+            for event in data.get("events", []):
+                await broadcast({**event, "id": f"{session}:{event['id']}", "type": "room_event"})
             for region in ("r1", "r2"):
                 for m in data[region]:
                     key = (region, m["id"])
