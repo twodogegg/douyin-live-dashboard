@@ -324,3 +324,9 @@ h1, h2, h3, h4, p { margin: 0; }
 
 .media-preview video { display: block; width: 100%; max-height: 65dvh; margin-top: 12px; }
 .media-preview .row, .group-details .row { display: flex; justify-content: flex-end; align-items: center; gap: 8px; margin-top: 14px; }
+
+.generated-image-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 10px; margin-top: 4px; }
+.generated-image-grid figure { margin: 0; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; background: var(--muted); }
+.generated-image-grid img { display: block; width: 100%; height: auto; }
+.generated-image-grid figcaption { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 8px; font-size: 10px; color: var(--muted-foreground); }
+.ai-card .generated-image-grid { margin-top: 10px; }

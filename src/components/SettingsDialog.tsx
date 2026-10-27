@@ -6,6 +6,7 @@ import { Input } from './ui/input'
 import { Textarea } from './ui/textarea'
 import { Switch } from './ui/switch'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs'
+import { CapabilityPicker } from './CapabilityPicker'
 import { api, type AgentConfig } from '../api'
 
 export const LS = { base: 'dy.base', model: 'dy.model', key: 'dy.key', win: 'dy.win' }
@@ -65,7 +66,7 @@ export function SettingsDialog({
 
   return <Dialog open onOpenChange={open => { if (!open && !busy) onClose() }}><DialogContent className="settings-content sm:max-w-2xl">
     <DialogHeader><DialogTitle>模型与设置</DialogTitle><DialogDescription>连接模型服务，调整直播摘要的分析方式。私信回复沿用同一模型。</DialogDescription></DialogHeader>
-    <Tabs defaultValue="model"><TabsList className="w-full"><TabsTrigger value="model">模型连接</TabsTrigger><TabsTrigger value="analysis">摘要 Agent</TabsTrigger></TabsList>
+    <Tabs defaultValue="model"><TabsList className="w-full"><TabsTrigger value="model">模型连接</TabsTrigger><TabsTrigger value="analysis">摘要 Agent</TabsTrigger><TabsTrigger value="capabilities">工具与 Skills</TabsTrigger></TabsList>
       <TabsContent value="model"><FieldGroup>
         <Field><FieldLabel htmlFor="ai-base">Base URL</FieldLabel><Input id="ai-base" value={base} onChange={e => setBase(e.target.value)} placeholder="https://api.darl.cn/v1" /></Field>
         <Field><FieldLabel htmlFor="ai-model">模型名称</FieldLabel><Input id="ai-model" value={model} onChange={e => setModel(e.target.value)} placeholder="gpt-4o-mini" /></Field>
@@ -78,6 +79,9 @@ export function SettingsDialog({
           ['temperature', '随机性', 0, 2, .1], ['max_tokens', '最大输出 tokens', 1, 8000, 1], ['max_chars', '最大输入字符', 100, 50000, 100], ['min_messages', '最少消息条数', 1, 500, 1], ['r1_gap', '主播断句间隔 / 秒', 0, 120, .5],
         ] as const).map(([k, label, min, max, step]) => <Field key={k}><FieldLabel htmlFor={`analysis-${k}`}>{label}</FieldLabel><Input id={`analysis-${k}`} type="number" min={min} max={max} step={step} value={agent[k]} onChange={e => setField(k, Number(e.target.value))} /></Field>)}</FieldGroup>
         {([['keep_prev_summary', '保留上一段摘要作为上下文'], ['merge_repeats', '合并重复的短弹幕'], ['suppress_no_change', '无实质变化时不显示新摘要']] as const).map(([k, label]) => <Field orientation="horizontal" key={k}><FieldLabel htmlFor={`analysis-${k}`}>{label}</FieldLabel><Switch id={`analysis-${k}`} checked={agent[k]} onCheckedChange={value => setField(k, value)} /></Field>)}
+      </FieldGroup> : <p className="helper-text">{agentErr || '正在读取配置…'}</p>}</TabsContent>
+      <TabsContent value="capabilities">{agent ? <FieldGroup>
+        <CapabilityPicker agent="live" value={{ tools: agent.tools || [], skills: agent.skills || [], image_model: agent.image_model, image_size: agent.image_size, image_quality: agent.image_quality }} onChange={next => setAgent({ ...agent, ...next })} />
       </FieldGroup> : <p className="helper-text">{agentErr || '正在读取配置…'}</p>}</TabsContent>
     </Tabs>
     {saveState && <p role="status" className="error-text">{saveState}</p>}

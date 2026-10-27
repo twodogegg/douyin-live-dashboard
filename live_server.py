@@ -2,7 +2,7 @@
 """抖音语音直播间 AI 看板后端：FastAPI + WebSocket。
 
 - 启动即待机，不写死直播间；由看板手动填写房号后连接
-- 只接受语音直播间（房间数据 live_room_mode == 3），其它类型直接拒绝
+- 接受已开播的语音直播间和普通视频直播间
 - 连接前先校验登录态：未登录则在浏览器里登录，回看板点「我已登录完成」保存登录态
 - 随时可断开连接，断开后可重新填写房号
 - 分析 Agent 的提示词与参数放在 agent_config.json，可在看板设置里在线修改
@@ -34,7 +34,6 @@ from douyin_live_ai import collapse_r1, collapse_r2, is_no_change, strip_change_
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 LIVE_HOME = "https://live.douyin.com/"
-VOICE_ROOM_MODE = 3          # 抖音 room.live_room_mode：3 = 语音直播间
 
 app = FastAPI()
 CLIENTS: set[WebSocket] = set()
@@ -382,7 +381,7 @@ async def maybe_analyze(last_flush: float) -> float:
 
 
 async def scraper_task(rid: str):
-    """连接某个语音直播间：开一个房间页，持续抓取直到断开。"""
+    """连接直播间：开一个房间页，持续抓取直到断开。"""
     global RUNNING, ROOM_PAGE
     RUNNING = True
     try:
@@ -568,8 +567,6 @@ async def connect(c: Connect):
         return {"ok": False, "msg": "房间不存在或查询失败，请检查房号"}
     if info.get("status") != 2:
         return {"ok": False, "msg": "该房间当前未开播"}
-    if info.get("mode") != VOICE_ROOM_MODE:
-        return {"ok": False, "msg": "只支持语音直播间，该房间不是语音直播"}
     reset_buffers()
     STATE.update(status="连接中", room=info.get("title") or "", room_id=rid)
     await broadcast({"type": "reset"})

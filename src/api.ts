@@ -1,4 +1,4 @@
-import type { AiCard, DmContact, DmAgent, DmMemory, DmConv, DmMsg, DmGroup, DmMedia, DmStat, FishConfig, FishVoice, VoiceAudio, MemoryProfile, MsgItem, Stat } from './types'
+import type { AiCard, DmContact, DmAgent, DmMemory, DmConv, DmMsg, DmGroup, DmMedia, DmStat, FishConfig, FishVoice, VoiceAudio, MemoryProfile, MsgItem, Stat, AgentCapabilities, CapabilityCatalog, GeneratedImage, DraftResult, StageConfig, StageState, StageReply } from './types'
 
 async function req<T>(path: string, init?: RequestInit): Promise<T | null> {
   try {
@@ -18,7 +18,7 @@ const post = (body?: unknown): RequestInit => ({
 
 export type ConfigPayload = { base_url: string; model: string; key: string; window: number }
 export type ConfigResult = { ok: boolean; model: string; window: number; has_key: boolean }
-export type AgentConfig = {
+export type AgentConfig = AgentCapabilities & {
   system_prompt: string
   temperature: number
   max_tokens: number
@@ -46,6 +46,10 @@ export type HistoryMessage = {
 }
 
 export const api = {
+  stageConfig: () => req<StageState>('/stage/config'),
+  stageSave: (config: Partial<StageConfig>) => req<StageState & { ok: boolean; msg?: string }>('/stage/config', post(config)),
+  stageTest: (text: string) => req<{ ok: boolean; msg?: string; reply?: StageReply }>('/stage/test', post({ text })),
+  stageOpen: () => req<{ ok: boolean; msg?: string }>('/stage/window', post()),
   loginStatus: () => req<{ logged_in: boolean }>('/login/status'),
   loginStart: () => req<LoginResult>('/login/start', post()),
   loginComplete: () => req<LoginResult>('/login/complete', post()),
@@ -57,6 +61,7 @@ export const api = {
   getConfig: () => req<ConfigResult>('/config'),
   agentConfig: () => req<AgentConfig>('/agent'),
   saveAgentConfig: (c: AgentConfig) => req<AgentSaveResult>('/agent', post(c)),
+  capabilities: () => req<CapabilityCatalog>('/capabilities'),
   history: (limit = 60) => req<{ windows: HistoryWindow[] }>(`/history?limit=${limit}`),
   historyWindow: (id: number) => req<{ messages: HistoryMessage[] }>(`/history/${id}`),
   showLiveWindow: () => req<{ ok: boolean; visible?: boolean }>('/window/show', post()),
@@ -77,8 +82,11 @@ export const api = {
     req<{ ok: boolean; msg?: string; active_id?: string }>('/dm/select', post({ conv_id })),
   dmMsgs: (convId: string, limit = 200) =>
     req<{ messages: DmMsg[] }>(`/dm/messages/${encodeURIComponent(convId)}?limit=${limit}`),
-  dmDraft: (conv_id: string) =>
-    req<{ ok: boolean; text?: string; msg?: string }>('/dm/draft', post({ conv_id })),
+  dmDraft: (conv_id: string) => req<DraftResult>('/dm/draft', post({ conv_id })),
+  dmGenerateImages: (body: { prompt: string; size: string; n?: number }) =>
+    req<{ ok: boolean; msg?: string; images?: GeneratedImage[] }>('/dm/images/generate', post(body)),
+  dmSendImage: (conv_id: string, url: string) =>
+    req<{ ok: boolean; uploaded?: boolean; msg?: string }>('/dm/images/send', post({ conv_id, url })),
   dmSend: (conv_id: string, text: string) =>
     req<{ ok: boolean; outcome?: 'confirmed' | 'failed' | 'unknown'; partial?: boolean; msg?: string }>('/dm/send', post({ conv_id, text })),
   dmAttach: (conv_id: string) =>

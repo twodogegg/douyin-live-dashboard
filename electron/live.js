@@ -4,11 +4,13 @@ import { BrowserWindow, session } from 'electron'
 import fs from 'node:fs'
 import * as db from './db.js'
 import * as agentStore from './agent.js'
+import { CAPABILITY_DEFAULTS, skillInstructions } from './capabilities.js'
+import { generateImages } from './image-generation.js'
+import { runAgent } from './agent-runtime.js'
 import { EXTRACT_JS, OPEN_LOGIN_JS, FETCH_ROOM_JS, HARVEST_JS, CLOSE_PANEL_JS } from './extract.js'
 
 const LIVE_HOME = 'https://live.douyin.com/'
 const PARTITION = 'persist:douyin'
-const VOICE_ROOM_MODE = 3 // 抖音 room.live_room_mode：3 = 语音直播间
 
 export const STATE = {
   status: '待机',
@@ -167,7 +169,7 @@ export function setAgentConfig(conf) {
   const err = agentStore.validate(conf)
   if (err) return { ok: false, msg: err }
   agentStore.save(agentFile, conf)
-  AGENT_CONF = conf
+  AGENT_CONF = { ...CAPABILITY_DEFAULTS, ...conf }
   sendStat()
   return { ok: true, config: AGENT_CONF }
 }
@@ -359,7 +361,6 @@ export async function connect(roomId) {
   const info = await evalJs(win, FETCH_ROOM_JS, rid).catch(() => null)
   if (!info || !info.ok) return { ok: false, msg: '房间不存在或查询失败，请检查房号' }
   if (info.status !== 2) return { ok: false, msg: '该房间当前未开播' }
-  if (info.mode !== VOICE_ROOM_MODE) return { ok: false, msg: '只支持语音直播间，该房间不是语音直播' }
 
   resetBuffers()
   STATE.status = '连接中'
@@ -560,6 +561,7 @@ async function postChat(messages, override = {}) {
       temperature: override.temperature ?? AGENT_CONF.temperature,
       max_tokens: override.max_tokens ?? AGENT_CONF.max_tokens,
       messages,
+      ...(override.tools?.length ? { tools: override.tools, tool_choice: 'auto' } : {}),
     }),
     signal: AbortSignal.timeout(120000),
   })
@@ -572,6 +574,19 @@ async function postChat(messages, override = {}) {
   return res.json()
 }
 
+async function liveTool(name, args) {
+  if (!AGENT_CONF.tools.includes(name)) return { ok: false, error: '工具未启用' }
+  if (name === 'generate_image') {
+    try {
+      const size = ['auto', '1024x1024', '1536x1024', '1024x1536'].includes(args.size) ? args.size : AGENT_CONF.image_size
+      const n = Math.max(1, Math.min(4, Math.floor(Number(args.n) || 1)))
+      const images = await generateImages({ ...imageConfig(), model: AGENT_CONF.image_model, prompt: String(args.prompt || '').trim(), size, quality: AGENT_CONF.image_quality, n })
+      return { ok: true, images, message: `已生成 ${images.length} 张图片；图片已单独交给用户预览，不要说无法生成。` }
+    } catch (e) { return { ok: false, error: String(e.message || e).slice(0, 800) } }
+  }
+  return { ok: false, error: '未知工具' }
+}
+
 async function callLlm(transcript, prevSummary) {
   const maxChars = Number(AGENT_CONF.max_chars)
   if (transcript.length > maxChars) transcript = '（较早内容已截断）\n' + transcript.slice(-maxChars)
@@ -579,22 +594,50 @@ async function callLlm(transcript, prevSummary) {
   if (AGENT_CONF.keep_prev_summary && prevSummary)
     user = `上一时段摘要（供衔接参考）：\n${prevSummary}\n\n${user}`
 
+  const instructions = skillInstructions(AGENT_CONF.skills)
   const messages = [
-    { role: 'system', content: AGENT_CONF.system_prompt },
+    { role: 'system', content: `${AGENT_CONF.system_prompt}${instructions ? `\n\n${instructions}` : ''}` },
     { role: 'user', content: user },
   ]
   let text = ''
-  // 模型输出被 max_tokens 截断时自动续写，避免摘要停在半句
-  for (let i = 0; i < 3; i++) {
-    const data = await postChat(messages)
-    const choice = data.choices && data.choices[0]
-    const part = (choice && choice.message && choice.message.content) || ''
-    text += part
-    if (!choice || choice.finish_reason !== 'length') break
-    messages.push({ role: 'assistant', content: part })
-    messages.push({ role: 'user', content: '继续输出被截断的剩余内容，只输出剩余部分，不要重复已经输出的内容。' })
+  let images = []
+  if (AGENT_CONF.tools.length) {
+    const result = await runAgent({ messages, config: AGENT_CONF, agents: ['live'], request: (m, tools) => postChat(m, { tools }), execute: liveTool })
+    text = result.text
+    images = result.calls.flatMap(call => call.ok && Array.isArray(call.images) ? call.images : [])
   }
-  return text.trim()
+  // 模型输出被 max_tokens 截断时自动续写，避免摘要停在半句。
+  // 工具路径从完整对话历史续写，普通路径从初始消息续写，两种情况互不混用。
+  let history = [...messages]
+  if (AGENT_CONF.tools.length) {
+    history = [...messages]
+    let round = 0
+    while (round < 3) {
+      const data = round === 0
+        ? { choices: [{ message: { content: text }, finish_reason: 'stop' }] }
+        : await postChat(history)
+      const choice = data.choices && data.choices[0]
+      const part = (choice && choice.message && choice.message.content) || ''
+      text = round === 0 ? text : text + part
+      round++
+      if (!choice || choice.finish_reason !== 'length') break
+      history.push({ role: 'assistant', content: part })
+      history.push({ role: 'user', content: '继续输出被截断的剩余内容，只输出剩余部分，不要重复已经输出的内容。' })
+    }
+  } else {
+    let round = 0
+    while (round < 3) {
+      const data = await postChat(history)
+      const choice = data.choices && data.choices[0]
+      const part = (choice && choice.message && choice.message.content) || ''
+      text += part
+      round++
+      if (!choice || choice.finish_reason !== 'length') break
+      history.push({ role: 'assistant', content: part })
+      history.push({ role: 'user', content: '继续输出被截断的剩余内容，只输出剩余部分，不要重复已经输出的内容。' })
+    }
+  }
+  return { text: text.trim(), images }
 }
 
 async function maybeAnalyze(lastFlush) {
@@ -623,8 +666,11 @@ async function maybeAnalyze(lastFlush) {
   broadcast({ type: 'ai_pending', time, count: n })
   let ok = true
   let summary
+  let generatedImages = []
   try {
-    summary = await callLlm(transcript, PREV_SUMMARY)
+    const result = await callLlm(transcript, PREV_SUMMARY)
+    summary = result.text
+    generatedImages = result.images || []
   } catch (e) {
     summary = e.httpStatus ? `模型请求失败 HTTP ${e.httpStatus}: ${e.message}` : `模型请求失败: ${e.message}`
     ok = false
@@ -641,7 +687,7 @@ async function maybeAnalyze(lastFlush) {
   if (ok) PREV_SUMMARY = summary
   STATE.ai_count += 1
   STATE.last_ai = time
-  broadcast({ type: 'ai', time, count: n, summary, model: AI_CONF.model })
+  broadcast({ type: 'ai', time, count: n, summary, model: AI_CONF.model, images: generatedImages.map(image => ({ url: image.url, name: image.name, size: image.size })) })
   sendStat()
   return Date.now()
 }
@@ -649,6 +695,14 @@ async function maybeAnalyze(lastFlush) {
 // 供私信模块复用同一套模型配置
 export function aiConfig() {
   return { base_url: AI_CONF.base_url, model: AI_CONF.model, has_key: !!AI_CONF.key }
+}
+
+export function imageConfig() {
+  return { baseUrl: AI_CONF.base_url, apiKey: AI_CONF.key }
+}
+
+export async function chatRequest(messages, override = {}) {
+  return postChat(messages, override)
 }
 
 export async function chatComplete(messages, override = {}) {

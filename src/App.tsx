@@ -12,10 +12,16 @@ import { LoginGate } from './components/LoginGate'
 import { MessageFeed } from './components/MessageFeed'
 import { LS, readLocalConfig, SettingsDialog } from './components/SettingsDialog'
 import { useLiveStream } from './hooks/useLiveStream'
+import { LiveStageOutput, LiveStageStudio } from './components/LiveStage'
+import type { View } from './components/Header'
 
 export default function App() {
-  const { r1, r2, ai, avatars, stat, wsDown } = useLiveStream()
-  const [view, setView] = useState<'live' | 'dm'>('live')
+  return location.hash === '#/stage' ? <LiveStageOutput /> : <Dashboard />
+}
+
+function Dashboard() {
+  const { r1, r2, ai, avatars, stat, wsDown, stage, stageReply } = useLiveStream()
+  const [view, setView] = useState<View>('live')
 
   const [loggedIn, setLoggedIn] = useState(false)
   const [roomInput, setRoomInput] = useState('')
@@ -150,7 +156,7 @@ export default function App() {
           </main>
           <div className="workspace-footnote"><span className="status-dot" />{connected ? '实时消息流已连接' : '连接直播间后，消息将在这里实时更新'}<span>数据仅保存在本机</span></div>
         </div>
-      ) : <DmPanel />}
+      ) : view === 'stage' ? <LiveStageStudio messages={r2} stat={stat} stage={stage} reply={stageReply} wsDown={wsDown} onOpenSettings={() => setSettingsOpen(true)} /> : <DmPanel />}
 
       {!loggedIn && <LoginGate msg={loginMsg} onStart={startLogin} onDone={finishLogin} />}
       {accountOpen && (

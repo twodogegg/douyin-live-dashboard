@@ -25,6 +25,9 @@ export default defineConfig({
       '/history': BACKEND,
       '/dm': BACKEND,
       '/window': BACKEND,
+      '/capabilities': BACKEND,
+      '/generated-images': BACKEND,
+      '/stage': BACKEND,
     },
   },
 })

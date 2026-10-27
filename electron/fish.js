@@ -45,7 +45,7 @@ async function request(endpoint, { model, ...options } = {}) {
   const response = await fetch(`${BASE}${endpoint}`, {
     ...options,
     headers: { Authorization: `Bearer ${config.key}`, ...(model ? { model } : {}), ...options.headers },
-    signal: AbortSignal.timeout(120000),
+    signal: options.signal ? AbortSignal.any([options.signal, AbortSignal.timeout(120000)]) : AbortSignal.timeout(120000),
   })
   if (!response.ok) {
     let reason = ''
@@ -73,12 +73,27 @@ export function audioFile(id) {
   return file
 }
 
-export async function synthesize(text, referenceId = config.reference_id, emotion = config.emotion) {
+function ttsBody(text, referenceId, emotion) {
   if (typeof text !== 'string' || !text.trim() || text.length > 2000) throw new Error('语音文字需要在 1–2000 字之间')
   if (!referenceId || !/^[a-f\d]{32}$/i.test(referenceId)) throw new Error('请先选择音色')
   if (typeof emotion !== 'string' || emotion.length > 500) throw new Error('情绪描述过长')
-  const body = { text: `${emotion ? `[${emotion.replace(/[\[\]]/g, '')}] ` : ''}${text.trim()}`, reference_id: referenceId,
+  return { text: `${emotion ? `[${emotion.replace(/[\[\]]/g, '')}] ` : ''}${text.trim()}`, reference_id: referenceId,
     format: 'mp3', prosody: { speed: config.speed, volume: 0 }, normalize: true }
+}
+
+export async function streamSpeech(text, signal) {
+  const body = { ...ttsBody(text, config.reference_id, config.emotion), latency: 'balanced', chunk_length: 100 }
+  const response = await request('/v1/tts', { method: 'POST', model: config.tts_model, signal,
+    headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+  if (!/audio|octet-stream/.test(response.headers.get('content-type') || '') || !response.body) {
+    await response.body?.cancel()
+    throw new Error('Fish Audio 未返回音频流')
+  }
+  return response.body
+}
+
+export async function synthesize(text, referenceId = config.reference_id, emotion = config.emotion) {
+  const body = ttsBody(text, referenceId, emotion)
   const cacheKey = hash(JSON.stringify({ model: config.tts_model, ...body }))
   const indexFile = path.join(audioDir, `${cacheKey}.json`)
   try {

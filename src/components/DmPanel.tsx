@@ -1,4 +1,4 @@
-import { ArrowLeft, ArrowUpRight, AudioLines, BookOpen, Bot, CheckCheck, ChevronRight, CirclePause, Inbox, MessageSquare, Paperclip, Play, Radio, RefreshCw, Search, Send, Settings2, ShieldCheck, Sparkles, Users, X } from 'lucide-react'
+import { ArrowLeft, ArrowUpRight, AudioLines, BookOpen, Bot, CheckCheck, ChevronRight, CirclePause, Image as ImageIcon, Inbox, MessageSquare, Paperclip, Play, Radio, RefreshCw, Search, Send, Settings2, ShieldCheck, Sparkles, Users, X } from 'lucide-react'
 import { Button } from './ui/button'
 import { Input } from './ui/input'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from './ui/dialog'
@@ -19,6 +19,7 @@ import { useEffect, useRef, useState } from 'react'
 import { api } from '../api'
 import { useDmStream } from '../hooks/useDmStream'
 import { DmSettingsDialog } from './DmSettingsDialog'
+import { ImageGenDialog } from './ImageGenDialog'
 import { VoiceDialog } from './VoiceDialog'
 import { DmMemoryPanel } from './DmMemoryPanel'
 import { findEvidence } from '../lib/evidence'
@@ -167,6 +168,7 @@ export function DmPanel() {
   const { stat, convs, activeId, msgs, memory, wsDown, selecting, selectionError, rebuild, openConv, activateConv, refreshConvs } = useDmStream()
   const rebuildLabel = rebuild ? (rebuild.label || (rebuild.total ? `已整理 ${rebuild.done} / ${rebuild.total} 条消息` : `已整理 ${rebuild.done} 条消息`)) : ''
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [imageGenOpen, setImageGenOpen] = useState(false)
   const [voiceOpen, setVoiceOpen] = useState(false)
   const [text, setText] = useState('')
   const [busy, setBusy] = useState<'' | 'boot' | 'draft' | 'send' | 'sync' | 'attach' | 'group' | 'member'>('')
@@ -393,7 +395,7 @@ export function DmPanel() {
                 {msgs.map(m => <MessageScrollerItem key={m.key} messageId={m.key}><Message align={m.direction === 'out' ? 'end' : 'start'}><MessageAvatar><ConvAvatar name={m.direction === 'out' ? '我' : m.sender_name || active?.name || '?'} url={m.sender_avatar || null} /></MessageAvatar><MessageContent><MessageHeader>{m.direction === 'out' ? '我' : m.sender_name || (active?.is_group ? '未记录发送者' : active?.name || '对方')}</MessageHeader><Bubble variant={m.direction === 'out' ? 'default' : 'muted'} align={m.direction === 'out' ? 'end' : 'start'}><BubbleContent><MsgContent m={m} onMedia={setMedia} /></BubbleContent></Bubble><MessageFooter>{m.time}{m.direction === 'out' && <CheckCheck />}</MessageFooter></MessageContent></Message></MessageScrollerItem>)}
               </MessageScrollerContent></MessageScrollerViewport><MessageScrollerButton aria-label="跳到最新消息" /></MessageScroller></MessageScrollerProvider>
               <div className="composer">{memory?.send_outcome === 'unknown' && <p className="helper-text" role="status">正在自动核对上一条发送回执…</p>}{memory?.send_partial === 1 && <p className="helper-text" role="status">上一条已确认发送首段，未自动重发其余内容。</p>}<div className="composer-top"><span><Sparkles />{generated ? 'AI 草稿 · 由你确认发送' : '写下你的回复'}</span>{generated && text.trim() !== generated.original.trim() && !active?.is_group && <Button variant="ghost" size="sm" onClick={saveExample}><BookOpen data-icon="inline-start" />收录改写</Button>}<span className="composer-shortcut">⌘ / Ctrl + Enter 发送</span></div><Textarea aria-label="回复内容" value={text} onChange={e => setText(e.target.value)} placeholder={stat.running ? '输入回复，或让 AI 帮你起个头…' : '开启私信后即可回复'} disabled={!stat.running || selecting || stat.active_id !== activeId} rows={3} onKeyDown={e => { if ((e.metaKey || e.ctrlKey) && e.key === 'Enter' && canSend) send() }} />
-                <div className="composer-actions"><Button variant="ghost" size="icon" aria-label="发送图片或视频" onClick={attach} disabled={!stat.running || !!busy || selecting}><Paperclip /></Button><span className={cn('composer-note', noteBad && 'error-text')} role="status">{selectionError || note}</span><Button variant="outline" onClick={draft} disabled={!stat.running || !!busy || selecting}><Sparkles data-icon="inline-start" />{busy === 'draft' ? '生成中…' : '生成草稿'}</Button><Button onClick={send} disabled={!canSend}><Send data-icon="inline-start" />{busy === 'send' ? '发送中…' : '发送'}</Button></div>
+                <div className="composer-actions"><Button variant="ghost" size="icon" aria-label="发送图片或视频" onClick={attach} disabled={!stat.running || !!busy || selecting}><Paperclip /></Button><Button variant="ghost" size="icon" aria-label="AI 生图" onClick={() => setImageGenOpen(true)} disabled={!stat.running || !!busy || selecting || stat.active_id !== activeId}><ImageIcon /></Button><span className={cn('composer-note', noteBad && 'error-text')} role="status">{selectionError || note}</span><Button variant="outline" onClick={draft} disabled={!stat.running || !!busy || selecting}><Sparkles data-icon="inline-start" />{busy === 'draft' ? '生成中…' : '生成草稿'}</Button><Button onClick={send} disabled={!canSend}><Send data-icon="inline-start" />{busy === 'send' ? '发送中…' : '发送'}</Button></div>
               </div>
             </>}
           </section>
@@ -404,6 +406,7 @@ export function DmPanel() {
 
       {media && <MediaDialog message={media} onClose={() => setMedia(null)} />}
       {settingsOpen && <DmSettingsDialog convs={convs} onClose={() => { setSettingsOpen(false); setGenerated(null); setText('') }} onBlocked={block} />}
+      {imageGenOpen && activeId && <ImageGenDialog convId={activeId} onClose={() => setImageGenOpen(false)} onSent={message => { say(message); refreshConvs() }} />}
       {voiceOpen && <VoiceDialog initialText={text} onClose={() => setVoiceOpen(false)} />}
 
       {groupOpen && group && (

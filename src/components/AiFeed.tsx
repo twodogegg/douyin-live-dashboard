@@ -26,6 +26,9 @@ export function AiFeed({ cards }: { cards: AiCard[] }) {
             </span>
           </div>
           <div className="body">{c.pending ? <div className="flex flex-col gap-2"><Skeleton className="h-3 w-full" /><Skeleton className="h-3 w-2/3" /><span>正在整理本时段的对话…</span></div> : c.summary}</div>
+          {!!c.images?.length && <div className="generated-image-grid">
+            {c.images.map(image => <figure key={image.url}><img src={image.url} alt={image.name} loading="lazy" /><figcaption>{(image.size / 1024).toFixed(0)} KB</figcaption></figure>)}
+          </div>}
         </div>
       ))}
     </div>

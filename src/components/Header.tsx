@@ -1,4 +1,4 @@
-import { Activity, ArrowUpRight, AudioLines, Check, ChevronRight, History, LayoutDashboard, MessageSquare, Radio, Settings2, ShieldCheck, Unplug, UserRound } from 'lucide-react'
+import { Activity, ArrowUpRight, AudioLines, Check, ChevronRight, History, LayoutDashboard, MessageSquare, Radio, Settings2, ShieldCheck, Unplug, UserRound, Wallpaper } from 'lucide-react'
 import { Button } from './ui/button'
 import { Badge } from './ui/badge'
 import { Input } from './ui/input'
@@ -6,7 +6,7 @@ import { Separator } from './ui/separator'
 import { cn } from '../lib/utils'
 import type { Stat } from '../types'
 
-export type View = 'live' | 'dm'
+export type View = 'live' | 'dm' | 'stage'
 
 export function Header({
   stat,
@@ -54,6 +54,7 @@ export function Header({
       <nav aria-label="主导航" className="sidebar-nav">
         <Button variant={view === 'live' ? 'secondary' : 'ghost'} className={cn('nav-button', view === 'live' && 'active')} onClick={() => onView('live')}><LayoutDashboard data-icon="inline-start" />直播看板<ChevronRight data-icon="inline-end" /></Button>
         <Button variant={view === 'dm' ? 'secondary' : 'ghost'} className={cn('nav-button', view === 'dm' && 'active')} onClick={() => onView('dm')}><MessageSquare data-icon="inline-start" />私信工作台<ChevronRight data-icon="inline-end" /></Button>
+        <Button variant={view === 'stage' ? 'secondary' : 'ghost'} className={cn('nav-button', view === 'stage' && 'active')} onClick={() => onView('stage')}><Wallpaper data-icon="inline-start" />直播背景板<ChevronRight data-icon="inline-end" /></Button>
         <Button variant="ghost" className="nav-button" onClick={onOpenHistory}><History data-icon="inline-start" />历史记录</Button>
       </nav>
       <Separator />
@@ -66,12 +67,12 @@ export function Header({
       </div>
     </aside>
     <header className="app-header">
-      <div className="breadcrumb">工作空间<ChevronRight /><strong>{view === 'live' ? '直播看板' : '私信工作台'}</strong></div>
-      <div className="header-actions"><Badge variant={wsDown ? 'destructive' : 'outline'}><Activity data-icon="inline-start" />{wsDown ? '服务离线' : '本地服务已连接'}</Badge><Separator orientation="vertical" /><Button variant="ghost" size="sm" onClick={view === 'live' ? onShowLiveWindow : onShowDmWindow}>打开抖音窗口<ArrowUpRight data-icon="inline-end" /></Button></div>
+      <div className="breadcrumb">工作空间<ChevronRight /><strong>{view === 'live' ? '直播看板' : view === 'stage' ? '直播背景板' : '私信工作台'}</strong></div>
+      <div className="header-actions"><Badge variant={wsDown ? 'destructive' : 'outline'}><Activity data-icon="inline-start" />{wsDown ? '服务离线' : '本地服务已连接'}</Badge><Separator orientation="vertical" /><Button variant="ghost" size="sm" onClick={view === 'dm' ? onShowDmWindow : onShowLiveWindow}>打开抖音窗口<ArrowUpRight data-icon="inline-end" /></Button></div>
     </header>
-    {view === 'live' && <div className="live-connection">
+    {view !== 'dm' && <div className="live-connection">
       <div className="connection-state"><Radio /><div><strong>直播间连接</strong><p>{roomText}</p></div></div>
-      <Input aria-label="直播间号" placeholder="输入语音直播间号" autoComplete="off" value={roomInput} disabled={connected || !loggedIn} onChange={e => setRoomInput(e.target.value)} onKeyDown={e => { if (e.key === 'Enter' && loggedIn) onToggleConn() }} />
+      <Input aria-label="直播间号" placeholder="输入直播间号" autoComplete="off" value={roomInput} disabled={connected || !loggedIn} onChange={e => setRoomInput(e.target.value)} onKeyDown={e => { if (e.key === 'Enter' && loggedIn) onToggleConn() }} />
       <Button variant={connBusy ? 'outline' : 'default'} disabled={!loggedIn} onClick={onToggleConn}>{connBusy ? <Unplug data-icon="inline-start" /> : <Radio data-icon="inline-start" />}{connBusy ? '断开连接' : '连接直播间'}</Button>
       {connMsg && <span className={cn('connection-note', !connMsgOk && 'error-text')}>{connMsgOk && <Check />}{connMsg}</span>}
     </div>}

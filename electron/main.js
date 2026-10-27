@@ -7,6 +7,8 @@ import * as live from './live.js'
 import * as im from './im.js'
 import * as fish from './fish.js'
 import { startServer } from './server.js'
+import { initCapabilities } from './capabilities.js'
+import { initImageGeneration } from './image-generation.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const DEV_URL = process.env.DY_DEV_URL || ''
@@ -22,7 +24,24 @@ app.userAgentFallback = app.userAgentFallback
   .replace(new RegExp(`\\s${app.getName()}/\\S+`), '')
 
 let mainWin = null
+let stageWin = null
 let server = null
+
+function showStageWindow() {
+  if (stageWin && !stageWin.isDestroyed()) { stageWin.show(); stageWin.focus(); return }
+  stageWin = new BrowserWindow({
+    width: 1280,
+    height: 760,
+    minWidth: 800,
+    minHeight: 500,
+    title: '小鲸直播间 · 播出画面',
+    backgroundColor: '#0b1937',
+    webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true },
+  })
+  stageWin.loadURL(`${DEV_URL || `http://127.0.0.1:${server.port}/`}#/stage`)
+  stageWin.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
+  stageWin.on('closed', () => { stageWin = null })
+}
 
 function createMainWindow(url) {
   mainWin = new BrowserWindow({
@@ -59,6 +78,8 @@ if (!app.requestSingleInstanceLock()) {
     if (process.platform !== 'darwin') Menu.setApplicationMenu(null)
 
     const userData = app.getPath('userData')
+    initCapabilities({ builtinDirectory: path.join(__dirname, 'skills'), customDirectory: path.join(userData, 'skills') })
+    initImageGeneration(path.join(userData, 'generated_images'))
     db.initDb(path.join(userData, 'live_data.db'))
     fish.init(path.join(userData, 'fish_audio.json'), path.join(userData, 'voice_audio'))
     await live.init({
@@ -75,6 +96,8 @@ if (!app.requestSingleInstanceLock()) {
     server = await startServer({
       port: PORT,
       staticDir: DEV_URL ? null : path.join(__dirname, '..', 'dist'),
+      stageFile: path.join(userData, 'live_stage.json'),
+      showStage: showStageWindow,
     })
 
     // 内置浏览器与看板共用去标识 UA

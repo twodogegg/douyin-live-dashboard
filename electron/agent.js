@@ -1,6 +1,7 @@
 // 分析 Agent 配置：提示词与参数放在 agent_config.json，运行时位于应用数据目录。
 import fs from 'node:fs'
 import path from 'node:path'
+import { CAPABILITY_DEFAULTS, listSkills, normalizeCapabilities, validateCapabilities } from './capabilities.js'
 
 const REQUIRED = [
   'system_prompt', 'temperature', 'max_tokens', 'max_chars',
@@ -26,6 +27,8 @@ export function validate(conf) {
   if (!(Number(conf.repeat_min_count) >= 2 && Number(conf.repeat_min_count) <= 100)) return 'repeat_min_count 需要在 2-100 之间'
   if (typeof conf.no_change_marker !== 'string' || !conf.no_change_marker.trim()) return 'no_change_marker 不能为空'
   if (typeof conf.suppress_no_change !== 'boolean') return 'suppress_no_change 必须是布尔值'
+  const capabilityError = validateCapabilities({ ...CAPABILITY_DEFAULTS, ...conf }, new Set(listSkills().map(skill => skill.id)))
+  if (capabilityError) return capabilityError
   const labels = conf.region_labels
   if (!labels || typeof labels !== 'object' || !['r1', 'r2'].every((k) => typeof labels[k] === 'string' && labels[k].trim()))
     return 'region_labels 需要包含 r1 和 r2 的非空名称'
@@ -40,7 +43,7 @@ export function load(file, defaultFile) {
   const conf = JSON.parse(fs.readFileSync(file, 'utf-8'))
   const err = validate(conf)
   if (err) throw new Error(`${file}: ${err}`)
-  return conf
+  return { ...CAPABILITY_DEFAULTS, ...conf, ...normalizeCapabilities(conf) }
 }
 
 export function save(file, conf) {

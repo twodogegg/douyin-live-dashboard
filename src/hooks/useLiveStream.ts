@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { norm } from '../lib/norm'
-import type { AiCard, MsgItem, Stat } from '../types'
+import type { AiCard, MsgItem, Stat, StageState, StageReply } from '../types'
 
 const MAX_KEEP = 300
 
@@ -28,6 +28,8 @@ export function useLiveStream() {
   const [avatars, setAvatars] = useState<Record<string, string>>({})
   const [stat, setStat] = useState<Stat>(INITIAL_STAT)
   const [wsDown, setWsDown] = useState(false)
+  const [stage, setStage] = useState<StageState | null>(null)
+  const [stageReply, setStageReply] = useState<StageReply | null>(null)
 
   useEffect(() => {
     let ws: WebSocket | null = null
@@ -43,6 +45,13 @@ export function useLiveStream() {
 
     const handle = (m: WsMessage) => {
       switch (m.type) {
+        case 'stage_status':
+          setStage(m as unknown as StageState)
+          if (!(m as unknown as StageState).last_reply) setStageReply(null)
+          break
+        case 'stage_reply':
+          setStageReply(m as unknown as StageReply)
+          break
         case 'r1':
           learnAvatar(m.user as string, m.avatar as string | undefined)
           setR1((prev) => {
@@ -89,6 +98,7 @@ export function useLiveStream() {
             count: m.count as number,
             summary: m.summary as string,
             model: m.model as string,
+            images: (m.images as AiCard['images']) || [],
           }
           setAi((prev) => {
             const i = prev.findIndex((x) => x.pending && x.time === card.time)
@@ -108,7 +118,7 @@ export function useLiveStream() {
     }
 
     const connect = () => {
-      ws = new WebSocket(`ws://${location.host}/ws`)
+      ws = new WebSocket(`${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/ws`)
       ws.onopen = () => setWsDown(false)
       ws.onmessage = (e) => {
         try {
@@ -131,5 +141,5 @@ export function useLiveStream() {
     }
   }, [])
 
-  return { r1, r2, ai, avatars, stat, wsDown }
+  return { r1, r2, ai, avatars, stat, wsDown, stage, stageReply }
 }

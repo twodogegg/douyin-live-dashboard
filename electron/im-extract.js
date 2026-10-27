@@ -462,6 +462,39 @@ async (message, readImage = false) => {
 `
 
 // 写入并发送。发送后校验文本确实出现在页面上。
+export const IM_SEND_UPLOADED_JS = String.raw`
+async (expectedId, beforeCount) => {
+  const scan = () => (${IM_SCAN_JS})();
+  const wait = ms => new Promise(r => setTimeout(r, ms));
+  const clickSend = () => {
+    const btn = document.querySelector('.messageMsgInputpublishBtn, .e2e-send-msg-btn')
+      || [...document.querySelectorAll('button, div, span')].find(e => {
+        const t = (e.innerText || '').replace(/\s+/g, ' ').trim();
+        return (t === '发送' || t === 'Send') && e.offsetParent !== null && e.children.length <= 3;
+      });
+    if (!btn) return false;
+    for (const type of ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click']) {
+      btn.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, view: window }));
+    }
+    return true;
+  };
+  const before = scan();
+  if (!before.ok || before.active_id !== expectedId) return { ok: false, outcome: 'failed', msg: '会话已切换，已取消发送图片' };
+  if ((before.messages || []).length < beforeCount) return { ok: false, outcome: 'failed', msg: '图片还未出现在待发送区，请稍后重试' };
+  if (!clickSend()) return { ok: false, outcome: 'unknown', msg: '没有找到发送按钮，图片已放入输入框，请在抖音窗口确认发送' };
+  for (let n = 0; n < 12; n++) {
+    await wait(500);
+    const after = scan();
+    if (after.active_id !== expectedId) break;
+    if ((after.messages || []).length > beforeCount) {
+      const added = after.messages.slice(beforeCount);
+      if (added.some(m => m.direction === 'out' && m.kind === 'image')) return { ok: true, outcome: 'confirmed' };
+    }
+  }
+  return { ok: false, outcome: 'unknown', msg: '图片发送结果未确认，请在抖音窗口核对；不会自动重发' };
+}
+`
+
 export const IM_SEND_JS = String.raw`
 async (text, expectedId, account) => {
   ${MODEL_HELPERS}

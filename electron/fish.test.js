@@ -56,6 +56,30 @@ test('ASR 用 multipart 文件和精确模型头，保留情绪线索但去掉�
   assert.deepEqual(await fish.transcribe(Buffer.from('audio-bytes')), { text: '[高兴] 今天挺好的', duration: 3 })
 })
 
+test('直播 TTS 直接返回音频流，首块可先读取，取消传播到供应商请求', async () => {
+  let bodyController
+  let signal
+  globalThis.fetch = async (url, options) => {
+    signal = options.signal
+    const body = JSON.parse(options.body)
+    assert.equal(body.latency, 'balanced')
+    assert.equal(body.chunk_length, 100)
+    assert.equal(body.format, 'mp3')
+    return new Response(new ReadableStream({ start(controller) {
+      bodyController = controller
+      controller.enqueue(new TextEncoder().encode('first-audio'))
+    } }), { headers: { 'Content-Type': 'audio/mpeg' } })
+  }
+  const controller = new AbortController()
+  const stream = await fish.streamSpeech('你好，测试流式语音', controller.signal)
+  const reader = stream.getReader()
+  assert.equal(new TextDecoder().decode((await reader.read()).value), 'first-audio')
+  controller.abort()
+  assert.equal(signal.aborted, true)
+  bodyController.close()
+  await reader.cancel()
+})
+
 test('失败请求不生成成功缓存；空转写不冒充成功', async () => {
   let calls = 0
   globalThis.fetch = async () => { calls++; return Response.json({ message: 'Invalid test-secret' }, { status: 401 }) }

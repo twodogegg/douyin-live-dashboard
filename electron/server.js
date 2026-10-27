@@ -9,6 +9,10 @@ import * as db from './db.js'
 import * as media from './media.js'
 import * as fish from './fish.js'
 import { parseMemory } from './dm-context.js'
+import { TOOL_DEFINITIONS, listSkills } from './capabilities.js'
+import { serveGeneratedImage } from './image-generation.js'
+import { createLiveStage } from './live-stage.js'
+import { createStageAudio } from './stage-audio.js'
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -17,6 +21,7 @@ const MIME = {
   '.json': 'application/json; charset=utf-8',
   '.svg': 'image/svg+xml',
   '.png': 'image/png',
+  '.webm': 'video/webm',
   '.jpg': 'image/jpeg',
   '.woff2': 'font/woff2',
   '.ico': 'image/x-icon',
@@ -66,26 +71,36 @@ function serveStatic(res, staticDir, pathname) {
   res.end(fs.readFileSync(file))
 }
 
-export function startServer({ port = 0, staticDir }) {
+export function startServer({ port = 0, staticDir, stageFile, showStage }) {
   const wss = new WebSocketServer({ noServer: true })
   const clients = new Set()
+  const send = msg => {
+    const data = JSON.stringify(msg)
+    for (const ws of [...clients]) {
+      try { ws.send(data) } catch { clients.delete(ws) }
+    }
+  }
+  const stageAudio = createStageAudio(fish.streamSpeech)
+  const stage = createLiveStage({
+    file: stageFile,
+    chat: live.chatComplete,
+    synthesize: text => stageAudio.prepare(text),
+    cancelAudio: stageAudio.clear,
+    broadcast: send,
+    readiness: () => ({ ai: live.aiConfig().has_key, voice: fish.getConfig().has_key && !!fish.getConfig().reference_id }),
+  })
 
   wss.on('connection', (ws) => {
     clients.add(ws)
     ws.send(JSON.stringify(live.statMsg()))
+    ws.send(JSON.stringify(stage.snapshot()))
     ws.on('close', () => clients.delete(ws))
     ws.on('error', () => clients.delete(ws))
   })
 
   live.setBroadcaster((msg) => {
-    const data = JSON.stringify(msg)
-    for (const ws of [...clients]) {
-      try {
-        ws.send(data)
-      } catch {
-        clients.delete(ws)
-      }
-    }
+    send(msg)
+    stage.observe(msg)
   })
 
   const server = http.createServer(async (req, res) => {
@@ -93,6 +108,18 @@ export function startServer({ port = 0, staticDir }) {
     const p = url.pathname
     try {
       if (p === '/ws') return res.end()
+
+      const stageStream = p.match(/^\/stage\/audio\/([a-f\d-]{36})$/)
+      if (stageStream && req.method === 'GET') return await stageAudio.serve(req, res, stageStream[1])
+
+      if (p === '/stage/config' && req.method === 'GET') return json(res, stage.snapshot())
+      if (p === '/stage/config' && req.method === 'POST') return json(res, { ok: true, ...stage.configure(await readBody(req)) })
+      if (p === '/stage/test' && req.method === 'POST') return json(res, { ok: true, reply: await stage.test(await readBody(req)) })
+      if (p === '/stage/window' && req.method === 'POST') {
+        if (!showStage) return json(res, { ok: false, msg: '请在桌面端打开播出窗口' })
+        await showStage()
+        return json(res, { ok: true })
+      }
 
       if (p === '/login/status' && req.method === 'GET') return json(res, { logged_in: await live.loginStatus() })
       if (p === '/login/start' && req.method === 'POST') return json(res, await live.loginStart())
@@ -111,6 +138,14 @@ export function startServer({ port = 0, staticDir }) {
 
       if (p === '/agent' && req.method === 'GET') return json(res, live.getAgentConfig())
       if (p === '/agent' && req.method === 'POST') return json(res, live.setAgentConfig(await readBody(req)))
+
+      if (p === '/capabilities' && req.method === 'GET') return json(res, { tools: TOOL_DEFINITIONS.map(({ definition, ...tool }) => ({ ...tool, parameters: definition.function.parameters })), skills: listSkills() })
+
+      const generatedImage = p.match(/^\/generated-images\/([\w-]+\.(?:png|jpe?g|webp|gif))$/)
+      if (p.startsWith('/generated-images/')) {
+        if (generatedImage && req.method === 'GET') return serveGeneratedImage(res, generatedImage[1])
+        return json(res, { ok: false, msg: '图片不存在' }, 404)
+      }
 
       if (p === '/window/show' && req.method === 'POST') return json(res, await live.showLiveWindow())
       if (p === '/window/hide' && req.method === 'POST') return json(res, live.hideLiveWindow())
@@ -157,7 +192,12 @@ export function startServer({ port = 0, staticDir }) {
         return json(res, await im.attachFiles(body.conv_id))
       }
       if (p === '/dm/agent' && req.method === 'GET') return json(res, im.getAgent())
-      if (p === '/dm/agent' && req.method === 'POST') return json(res, im.setAgent(await readBody(req)))
+      if (p === '/dm/agent' && req.method === 'POST') return json(res, im.setAgent(await readBody(req), new Set(listSkills().map(skill => skill.id))))
+      if (p === '/dm/images/generate' && req.method === 'POST') return json(res, await im.generateDmImages(await readBody(req)))
+      if (p === '/dm/images/send' && req.method === 'POST') {
+        const body = await readBody(req)
+        return json(res, await im.sendImage(body.conv_id, body.url))
+      }
       if (p === '/dm/block' && req.method === 'POST') {
         const body = await readBody(req)
         return json(res, im.setBlocked(body.conv_id, body.blocked))
@@ -256,6 +296,7 @@ export function startServer({ port = 0, staticDir }) {
         port: actual,
         close: () =>
           new Promise((done) => {
+            stage.close()
             wss.close()
             server.close(() => done())
           }),

@@ -135,14 +135,19 @@ EXTRACT_JS = r"""
   const list = document.querySelector('.webcast-chatroom___list');
   if (list) {
     list.querySelectorAll('.webcast-chatroom___item').forEach(it => {
-      if (it.closest('.webcast-chatroom___bottom-message')) return;   // 底部飘条，跳过
+      if (it.closest('.webcast-chatroom___bottom-message, .webcast-chatroom___bottom_message')) return;
+      if (it.querySelector('.webcast-chatroom__room-message')) return; // 平台公告不是聊天消息
       const full = clean(it.innerText);
       if (!full) return;
       const userEl = it.querySelector('.v8LY0gZF');
       let user = userEl ? clean(userEl.textContent).replace(/[:：]$/, '') : '';
-      let text = full;
-      if (user && text.startsWith(user)) text = clean(text.slice(user.length).replace(/^[:：]\s*/, ''));
-      r2.push({ id: idOf(it), user: user, text: text });
+      if (!user) return;
+      const content = it.querySelector('.cL385mHb');
+      const text = content ? clean(content.innerText) : clean(full.slice(full.indexOf(user) + user.length).replace(/^[:：]\s*/, ''));
+      if (!text) return;
+      if (it.querySelector('img[src*="webcast_anchor_badge"]')) {
+        r1.push({ id: 'chat-host:' + idOf(it), user: user, text: text });
+      } else r2.push({ id: idOf(it), user: user, text: text });
     });
   }
 

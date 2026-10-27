@@ -27,6 +27,30 @@ export type AiCard = {
   model?: string
   summary?: string
   pending?: boolean
+  images?: GeneratedImage[]
+}
+
+export type StageConfig = {
+  enabled: boolean
+  name: string
+  system_prompt: string
+  cooldown: number
+  voice_enabled: boolean
+}
+export type StageReply = {
+  id: string
+  user: string
+  message: string
+  text: string
+  audio_url: string
+  audio_error: string
+  test: boolean
+}
+export type StageState = {
+  config: StageConfig
+  status: 'idle' | 'thinking' | 'synthesizing' | 'ready' | 'error'
+  error: string
+  last_reply: StageReply | null
 }
 
 // ---------- 私信 ----------
@@ -117,7 +141,15 @@ export type DmStat = {
   protocol?: { status: string; error: string; received: number; comparison?: { browser: number; protocol: number; matched: number } }
 }
 
-export type DmAgent = {
+export type AgentCapabilities = {
+  tools: string[]
+  skills: string[]
+  image_model: string
+  image_size: 'auto' | '1024x1024' | '1536x1024' | '1024x1536'
+  image_quality: 'auto' | 'low' | 'medium' | 'high'
+}
+
+export type DmAgent = AgentCapabilities & {
   receive_mode?: 'browser' | 'compare' | 'protocol'
   system_prompt: string
   agent_rules: string
@@ -138,6 +170,12 @@ export type DmMemory = {
   profile: string
   updated: number
 }
+
+export type AgentTool = { id: string; name: string; description: string; risk: 'read' | 'write'; agents: string[]; parameters?: Record<string, unknown> }
+export type AgentSkill = { id: string; name: string; description: string; scope: 'builtin' | 'custom' }
+export type CapabilityCatalog = { tools: AgentTool[]; skills: AgentSkill[] }
+export type GeneratedImage = { name: string; url: string; size: number }
+export type DraftResult = { ok: boolean; text?: string; images?: GeneratedImage[]; msg?: string }
 
 export type FishConfig = {
   has_key: boolean

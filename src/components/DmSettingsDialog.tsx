@@ -9,6 +9,7 @@ import { Input } from './ui/input'
 import { Textarea } from './ui/textarea'
 import { Switch } from './ui/switch'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs'
+import { CapabilityPicker } from './CapabilityPicker'
 import { ToggleGroup, ToggleGroupItem } from './ui/toggle-group'
 import { Alert, AlertDescription, AlertTitle } from './ui/alert'
 import { Skeleton } from './ui/skeleton'
@@ -43,11 +44,14 @@ export function DmSettingsDialog({ convs, onClose, onBlocked }: {
       <DialogHeader><DialogTitle>自动回复设置</DialogTitle><DialogDescription>设定你的表达方式，管理消息接收与回复节奏。</DialogDescription></DialogHeader>
       {!agent && !note && <Skeleton className="h-48 w-full" />}
       {agent && <Tabs defaultValue="persona">
-        <TabsList className="w-full"><TabsTrigger value="persona">角色与规则</TabsTrigger><TabsTrigger value="runtime">接收与调度</TabsTrigger><TabsTrigger value="filter">过滤名单</TabsTrigger></TabsList>
+        <TabsList className="w-full"><TabsTrigger value="persona">角色与规则</TabsTrigger><TabsTrigger value="capabilities">工具与 Skills</TabsTrigger><TabsTrigger value="runtime">接收与调度</TabsTrigger><TabsTrigger value="filter">过滤名单</TabsTrigger></TabsList>
         <TabsContent value="persona"><FieldGroup>
           <Field orientation="horizontal"><Bot /><div className="flex-1"><FieldLabel htmlFor="auto-enabled">自动回复</FieldLabel><FieldDescription>只处理启动后收到的私聊新消息，群聊由你手动回复。</FieldDescription></div><Switch id="auto-enabled" checked={agent.enabled} onCheckedChange={enabled => setAgent({ ...agent, enabled })} /></Field>
           <Field><FieldLabel htmlFor="dm-persona">角色设定</FieldLabel><FieldDescription>身份、背景、性格和说话习惯。联系人关系可在资料面板单独设置。</FieldDescription><Textarea id="dm-persona" rows={6} maxLength={20000} value={agent.system_prompt} onChange={e => setAgent({ ...agent, system_prompt: e.target.value })} /></Field>
           <Field><FieldLabel htmlFor="dm-agent-rules">Agent 功能规则</FieldLabel><FieldDescription>消息处理、图片理解与转人工规则，优先于角色设定。</FieldDescription><Textarea id="dm-agent-rules" rows={5} maxLength={20000} value={agent.agent_rules || ''} onChange={e => setAgent({ ...agent, agent_rules: e.target.value })} /></Field>
+        </FieldGroup></TabsContent>
+        <TabsContent value="capabilities"><FieldGroup>
+          <CapabilityPicker agent="dm" value={{ tools: agent.tools || [], skills: agent.skills || [], image_model: agent.image_model, image_size: agent.image_size, image_quality: agent.image_quality }} onChange={next => setAgent({ ...agent, ...next })} />
         </FieldGroup></TabsContent>
         <TabsContent value="runtime"><FieldGroup>
           <Field><FieldLabel>消息接收方式</FieldLabel><ToggleGroup type="single" variant="outline" value={agent.receive_mode || 'browser'} onValueChange={value => { if (value) setAgent({ ...agent, receive_mode: value as DmAgent['receive_mode'] }) }}><ToggleGroupItem value="browser">浏览器</ToggleGroupItem><ToggleGroupItem value="compare">协议对照</ToggleGroupItem><ToggleGroupItem value="protocol">实验协议接收</ToggleGroupItem></ToggleGroup><FieldDescription>对照模式观察协议消息，由浏览器链路触发回复。实验接收使用协议事件触发同一个回复队列。</FieldDescription></Field>
