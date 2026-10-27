@@ -1,4 +1,4 @@
-import { AudioLines, Expand, Fish, MessageCircle, Radio, Settings2, Volume2, VolumeX, Waves } from 'lucide-react'
+import { AudioLines, Expand, Fish, MessageCircle, Music2, Pause, Play, Radio, Settings2, SkipForward, Volume2, VolumeX, Waves } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { api } from '../api'
 import { useLiveStream } from '../hooks/useLiveStream'
@@ -16,6 +16,7 @@ function StageBoard({ messages, stat, stage, reply, speaking = false, preview = 
 }) {
   const feed = useRef<HTMLDivElement>(null)
   const name = stage?.config.name || '小鲸'
+  const music = stage?.music
   useEffect(() => { if (feed.current) feed.current.scrollTop = feed.current.scrollHeight }, [messages])
 
   return <div className={`stage-board${speaking ? ' is-speaking' : ''}`}>
@@ -36,6 +37,12 @@ function StageBoard({ messages, stat, stage, reply, speaking = false, preview = 
         <div className="stage-character-label"><span className="stage-voice-bars"><i /><i /><i /><i /></span>{speaking ? `${name}正在说话` : !stat.room_id && !reply ? '等待连接直播间' : stage ? statusText[stage.status] : '等你的一条弹幕'}</div>
       </section>
       <aside className="stage-chat">
+        <section className="stage-music" aria-label="观众点歌" aria-live="polite">
+          <div className="stage-music-heading"><Music2 /><strong>深海点歌台</strong><span>{wsDown ? '连接已断开' : !music?.connected ? '等待连接' : music.playing ? '正在播放' : '已暂停'}</span></div>
+          <div className="stage-music-current"><span className={`stage-music-disc${music?.playing && !wsDown ? ' is-playing' : ''}`}><Music2 /></span><div><strong title={music?.current?.name}>{wsDown ? '播放状态待同步' : music?.current?.name || '等待第一首歌'}</strong><p>{!wsDown && music?.current ? `${music.current.artist}${music.current.user ? ` · @${music.current.user} 点播` : ''}` : '发弹幕：点歌 歌名 歌手'}</p></div></div>
+          <div className="stage-music-next"><span>下一首</span><strong title={music?.next?.name}>{music?.next ? `${music.next.name} · ${music.next.artists.join('/')}` : music?.pending ? '正在寻找歌曲…' : '暂无点歌'}</strong>{!!music?.queue.length && <small>{music.queue.length} 首待播</small>}</div>
+          <p className={`stage-music-notice${music?.error ? ' has-error' : ''}`}>{music?.error || music?.notice || (music?.enabled ? '把想听的歌，交给小鲸' : '观众点歌未开启')}</p>
+        </section>
         <div className="stage-chat-heading"><MessageCircle /><strong>海底来信</strong><span>{messages.length ? `${messages.length} 条互动` : '实时弹幕'}</span></div>
         <div className="stage-activity-counts"><span>进房 <b>{stage?.activity?.joins || 0}</b></span><span>关注 <b>{stage?.activity?.follows || 0}</b></span><small>本次连接检测到</small></div>
         {!!stage?.activity?.events.length && <div className="stage-activity-feed" role="log" aria-label="进房与关注提醒">{stage.activity.events.slice(-3).map(event => <p key={event.id}><time>{event.time}</time><span>{event.user}</span>{event.kind === 'follow' ? '关注了主播' : '进入了直播间'}</p>)}</div>}
@@ -46,7 +53,7 @@ function StageBoard({ messages, stat, stage, reply, speaking = false, preview = 
         <div className="stage-chat-footer"><span />每一条消息，都有机会被听见</div>
       </aside>
     </div>
-    <footer className="stage-footer"><span><Waves /> 你的树洞，今天也在线</span><span className="stage-token-usage" title="本次应用运行期间的主播 AI 回复用量，包含试播；重启后清零，不包含 TTS">Token <b>{(stage?.usage?.total_tokens || 0).toLocaleString()}</b> · 输入 {(stage?.usage?.prompt_tokens || 0).toLocaleString()} / 输出 {(stage?.usage?.completion_tokens || 0).toLocaleString()}{!!stage?.usage?.unreported && ` · ${stage.usage.unreported} 次未返回用量`}</span></footer>
+    <footer className="stage-footer"><span><Waves /> 你的树洞，今天也在线</span><span className="stage-token-usage" title="本次应用运行期间的主播互动用量，包含回复、点歌识别与试播；重启后清零，不包含 TTS">Token <b>{(stage?.usage?.total_tokens || 0).toLocaleString()}</b> · 输入 {(stage?.usage?.prompt_tokens || 0).toLocaleString()} / 输出 {(stage?.usage?.completion_tokens || 0).toLocaleString()}{!!stage?.usage?.unreported && ` · ${stage.usage.unreported} 次未返回用量`}</span></footer>
   </div>
 }
 
@@ -59,8 +66,9 @@ export function LiveStageStudio({ messages, stat, stage, reply, wsDown, onOpenSe
   const [busy, setBusy] = useState(false)
   const [testText, setTestText] = useState('你好小鲸，今天有点累，可以鼓励我一下吗？')
   const [previewReply, setPreviewReply] = useState<StageReply | null>(null)
+  const [songText, setSongText] = useState('')
 
-  useEffect(() => { if (stage) setDraft(stage.config) }, [stage?.config.name, stage?.config.system_prompt, stage?.config.cooldown, stage?.config.voice_enabled, stage?.config.enabled])
+  useEffect(() => { if (stage) setDraft(stage.config) }, [stage?.config.name, stage?.config.system_prompt, stage?.config.cooldown, stage?.config.voice_enabled, stage?.config.enabled, stage?.config.music_enabled])
   useEffect(() => {
     if (stage) return
     let alive = true
@@ -99,15 +107,27 @@ export function LiveStageStudio({ messages, stat, stage, reply, wsDown, onOpenSe
       </section>
       <aside className="stage-controls">
         <div className="stage-control-heading"><Settings2 /><h2>互动设置</h2><span>{stage ? stage.config.enabled ? '运行中' : '已暂停' : '未连接'}</span></div>
-        <div className="stage-usage-note">主播回复累计 {(stage?.usage?.total_tokens || 0).toLocaleString()} token · {stage?.usage?.requests || 0} 次调用<small>本次运行累计，含试播；重启后清零。进房与关注统计以页面实际显示的事件为准。</small>{!!stage?.usage?.unreported && <small>{stage.usage.unreported} 次调用未返回 token 用量，未计入累计。</small>}</div>
+        <div className="stage-usage-note">主播互动累计 {(stage?.usage?.total_tokens || 0).toLocaleString()} token · {stage?.usage?.requests || 0} 次调用<small>本次运行累计，含点歌识别与试播；重启后清零。进房与关注统计以页面实际显示的事件为准。</small>{!!stage?.usage?.unreported && <small>{stage.usage.unreported} 次调用未返回 token 用量，未计入累计。</small>}</div>
         <fieldset disabled={busy || !draft}>
           <label htmlFor="stage-name">主播名字</label><input id="stage-name" value={draft?.name || ''} maxLength={30} onChange={e => draft && setDraft({ ...draft, name: e.target.value })} />
           <label htmlFor="stage-persona">主播人设</label><textarea id="stage-persona" rows={5} value={draft?.system_prompt || ''} maxLength={6000} onChange={e => draft && setDraft({ ...draft, system_prompt: e.target.value })} />
           <div className="stage-control-row"><label htmlFor="stage-cooldown">回复间隔 <small>秒</small></label><input id="stage-cooldown" type="number" min={3} max={120} value={draft?.cooldown || 10} onChange={e => draft && setDraft({ ...draft, cooldown: Number(e.target.value) })} /></div>
           <label className="stage-voice-toggle"><span><Volume2 />语音回复<small>使用 Fish Audio 当前音色</small></span><input type="checkbox" checked={draft?.voice_enabled ?? true} onChange={e => draft && setDraft({ ...draft, voice_enabled: e.target.checked })} /></label>
+          <label className="stage-voice-toggle"><span><Music2 />观众点歌<small>按弹幕顺序排队，由网易云客户端播放</small></span><input type="checkbox" checked={draft?.music_enabled ?? false} onChange={e => draft && setDraft({ ...draft, music_enabled: e.target.checked })} /></label>
           <div className="stage-settings-links"><button onClick={() => setVoiceOpen(true)}>选择音色</button><button onClick={onOpenSettings}>配置 AI 模型</button></div>
           <div className="stage-start-row"><Button variant="outline" onClick={() => action(() => save())}>保存设置</Button><Button onClick={() => action(() => save(!stage?.config.enabled))}>{stage?.config.enabled ? '暂停互动' : '开启互动'}</Button></div>
         </fieldset>
+        <div className="stage-test stage-music-controls"><h3>网易云音乐</h3><p>无需开播，输入歌名即可本地测试。</p><p>{stage?.music?.connected ? '已连接 · 音乐沿用网易云的系统输出' : '首次连接会重新打开网易云客户端'}</p><Button variant="outline" disabled={busy} onClick={() => action(async () => {
+          const result = await api.musicConnect()
+          if (!result?.ok) throw new Error(result?.msg || '连接失败')
+          setNote('网易云已连接，开启观众点歌并保存设置后即可接收弹幕点歌。')
+        })}><Music2 />{stage?.music?.connected ? '重新连接网易云' : '连接网易云'}</Button>
+          <div className="stage-start-row"><Button variant="outline" disabled={busy || !stage?.music?.connected} onClick={() => action(async () => { const r = await api.musicControl('play_pause'); if (!r?.ok) throw new Error(r?.msg || '操作失败') })}>{stage?.music?.playing ? <Pause /> : <Play />}{stage?.music?.playing ? '暂停音乐' : '播放音乐'}</Button><Button variant="outline" disabled={busy || !stage?.music?.connected} onClick={() => action(async () => { const r = await api.musicControl('next'); if (!r?.ok) throw new Error(r?.msg || '操作失败') })}><SkipForward />播放下一首</Button></div>
+          <input aria-label="点播歌曲" placeholder="歌名，可加歌手" value={songText} maxLength={180} onChange={e => setSongText(e.target.value)} />
+          <Button variant="outline" disabled={busy || !songText.trim() || !stage?.music?.enabled || !stage?.music?.connected} onClick={() => action(async () => { const r = await api.musicRequest(`点歌 ${songText.trim()}`); if (!r?.ok) throw new Error(r?.msg || '点歌失败'); setSongText('') })}>加入点歌队列</Button>
+          {!!stage?.music?.queue.length && <ol className="stage-music-queue" aria-label="待播歌曲">{stage.music.queue.map(song => <li key={song.request_id}><strong>{song.name}</strong><span>{song.artists.join('/')} · @{song.user}</span></li>)}</ol>}
+          <p role="status">{stage?.music?.error || stage?.music?.notice}</p>
+        </div>
         <div className="stage-test"><h3>试播一句</h3><p>输入一条观众消息，测试 AI 回复和语音。</p><textarea aria-label="测试观众消息" rows={3} maxLength={1000} value={testText} onChange={e => setTestText(e.target.value)} /><Button variant="outline" disabled={busy || !draft || !testText.trim()} onClick={() => action(async () => {
           await save()
           setPreviewReply(null)

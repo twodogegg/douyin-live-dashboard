@@ -13,6 +13,9 @@ import { TOOL_DEFINITIONS, listSkills } from './capabilities.js'
 import { serveGeneratedImage } from './image-generation.js'
 import { createLiveStage } from './live-stage.js'
 import { createStageAudio } from './stage-audio.js'
+import { createMusicMcp } from './music-mcp.js'
+import { createStageMusic } from './stage-music.js'
+import { createMusicAgent } from './music-agent.js'
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -81,7 +84,21 @@ export function startServer({ port = 0, staticDir, stageFile, showStage }) {
     }
   }
   const stageAudio = createStageAudio(fish.streamSpeech)
-  const stage = createLiveStage({
+  let stage
+  const musicAgent = createMusicAgent({
+    file: path.join(path.dirname(stageFile), 'music_agent.json'),
+    chat: live.chatRequest,
+    onUsage: usage => stage?.recordUsage(usage),
+  })
+  const music = createStageMusic({
+    mcp: createMusicMcp(),
+    onChange: () => { if (stage) send(stage.snapshot()) },
+    parse: musicAgent.parse,
+    select: musicAgent.select,
+    context: musicAgent.context,
+  })
+  stage = createLiveStage({
+    music,
     file: stageFile,
     chat: async (messages, options) => {
       const data = await live.chatRequest(messages, options)
@@ -116,6 +133,16 @@ export function startServer({ port = 0, staticDir, stageFile, showStage }) {
       if (stageStream && req.method === 'GET') return await stageAudio.serve(req, res, stageStream[1])
 
       if (p === '/stage/config' && req.method === 'GET') return json(res, stage.snapshot())
+      if (p === '/stage/music/connect' && req.method === 'POST') return json(res, { ok: true, music: await music.connect() })
+      if (p === '/stage/music/control' && req.method === 'POST') return json(res, { ok: true, music: await music.control((await readBody(req)).action) })
+      if (p === '/stage/music/request' && req.method === 'POST') {
+        const { text } = await readBody(req)
+        if (typeof text !== 'string' || !text.trim() || text.length > 1000) throw new Error('请输入 1–1000 字的点歌消息')
+        if (!music.snapshot().enabled || !music.snapshot().connected) throw new Error('请先连接网易云并开启观众点歌与互动')
+        await music.request({ user: '主播', text })
+        const state = music.snapshot()
+        return json(res, { ok: !state.error, msg: state.error || undefined, music: state })
+      }
       if (p === '/stage/config' && req.method === 'POST') return json(res, { ok: true, ...stage.configure(await readBody(req)) })
       if (p === '/stage/test' && req.method === 'POST') return json(res, { ok: true, reply: await stage.test(await readBody(req)) })
       if (p === '/stage/window' && req.method === 'POST') {

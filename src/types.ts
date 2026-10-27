@@ -36,6 +36,19 @@ export type StageConfig = {
   system_prompt: string
   cooldown: number
   voice_enabled: boolean
+  music_enabled: boolean
+}
+export type MusicSong = { id: number; name: string; artists: string[]; user: string; query: string; request_id: string }
+export type StageMusic = {
+  enabled: boolean
+  connected: boolean
+  playing: boolean
+  current: { name: string; artist: string; user?: string } | null
+  next: MusicSong | null
+  queue: MusicSong[]
+  pending: number
+  error: string
+  notice: string
 }
 export type StageReply = {
   id: string
@@ -48,6 +61,7 @@ export type StageReply = {
 }
 export type StageState = {
   config: StageConfig
+  music: StageMusic | null
   status: 'idle' | 'thinking' | 'synthesizing' | 'ready' | 'error'
   error: string
   last_reply: StageReply | null

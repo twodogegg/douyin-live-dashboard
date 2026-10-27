@@ -164,3 +164,29 @@
   .stage-output .stage-footer { padding: 5% 6%; font-size: 2cqw; }
   .stage-output .stage-token-usage { max-width: 60%; }
 }
+
+.stage-music { flex-shrink: 0; padding-bottom: 1cqw; margin-bottom: 1cqw; border-bottom: 1px solid #a1c7e421; }
+.stage-music-heading { display: flex; align-items: center; gap: .5cqw; font-size: 1.05cqw; color: #d7eaf4; }
+.stage-music-heading > svg { width: 1.2cqw; height: 1.2cqw; color: #9bdcec; }
+.stage-music-heading > span { margin-left: auto; color: #9db3cb; font-size: .75cqw; }
+.stage-music-current { display: flex; align-items: center; gap: .9cqw; margin: .9cqw 0; }
+.stage-music-disc { display: grid; place-items: center; width: 3.6cqw; height: 3.6cqw; flex-shrink: 0; border: .6cqw solid #1c3452; outline: 1px solid #9bdcec33; border-radius: 50%; background: #9bdcec; color: #16314d; }
+.stage-music-disc svg { width: 1.15cqw; height: 1.15cqw; }
+.stage-music-disc.is-playing { animation: stage-record 12s linear infinite; }
+.stage-music-current > div { min-width: 0; }
+.stage-music-current strong { display: block; font-size: 1.25cqw; font-weight: 500; white-space: nowrap; text-overflow: ellipsis; overflow: hidden; }
+.stage-music-current p { font-size: .8cqw; margin: .2cqw 0 0; color: #9db3cb; white-space: nowrap; text-overflow: ellipsis; overflow: hidden; }
+.stage-music-next { display: flex; align-items: baseline; gap: .6cqw; padding: .5cqw .65cqw; border-radius: .5cqw; background: #9bdcec09; font-size: .8cqw; }
+.stage-music-next > span, .stage-music-next small { flex-shrink: 0; color: #9db3cb; font-size: .75cqw; }
+.stage-music-next strong { min-width: 0; flex: 1; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-weight: 400; color: #d6e5ef; }
+.stage-music-notice { margin: .55cqw 0 0; font-size: .72cqw; color: #9db3cb; line-height: 1.5; max-height: 2.2cqw; overflow: hidden; overflow-wrap: anywhere; }
+.stage-music-notice.has-error { color: #efad7d; }
+.stage-music-controls .stage-start-row { margin: 10px 0; }
+.stage-music-controls .stage-start-row > button { min-width: 0; padding-inline: 8px; }
+.stage-music-queue { margin: 12px 0 0; padding-left: 18px; max-height: 180px; overflow: auto; font-size: 11px; }
+.stage-music-queue li { padding: 5px 0; }
+.stage-music-queue strong, .stage-music-queue span { display: block; overflow-wrap: anywhere; }
+.stage-music-queue span { font-size: 10px; color: var(--dim); margin-top: 3px; }
+@keyframes stage-record { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .stage-music-disc.is-playing { animation: none; } }
+@media (min-width: 1201px) { .stage-preview-section { position: sticky; top: 20px; } }

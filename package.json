@@ -1,7 +1,7 @@
 {
   "name": "douyin-live-dashboard",
   "productName": "抖音直播看板",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "抖音语音直播间 AI 实时看板（Electron 桌面版）",
   "author": "twodogegg",
   "private": true,

@@ -154,3 +154,28 @@ test('进房与关注独立去重计数，不触发 AI；暂停保留，切换�
   stage.observe({ type: 'stat', room_id: '5678' })
   assert.deepEqual(stage.snapshot().activity, { joins: 0, follows: 0, events: [] })
 })
+
+test('点歌独立于聊天回复队列，消息密集时仍全部转交，暂停和切房清理', async t => {
+  let finish
+  const requests = []
+  const configurations = []
+  let resets = 0
+  const music = {
+    configure: value => configurations.push(value),
+    snapshot: () => ({ enabled: configurations.at(-1) }),
+    request: message => requests.push(message.text),
+    reset: () => { resets++ },
+    close() {},
+  }
+  const { stage } = fixture(t, { music, chat: () => new Promise(resolve => { finish = resolve }) })
+  stage.configure({ enabled: true, music_enabled: true, voice_enabled: false })
+  for (let id = 0; id < 5; id++) stage.observe({ type: 'r2', id, user: '观众', text: `点歌 ${id}` })
+  stage.observe({ type: 'r2', id: 3, user: '观众', text: '点歌 3' })
+  assert.equal(requests.length, 5)
+  stage.configure({ enabled: false })
+  assert.equal(configurations.at(-1), false)
+  stage.observe({ type: 'stat', room_id: 'new-room' })
+  assert.equal(resets, 1)
+  finish('晚到的回复')
+  await flush()
+})
