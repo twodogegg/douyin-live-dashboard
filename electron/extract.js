@@ -85,17 +85,23 @@ export const EXTRACT_JS = String.raw`
     return v;
   };
 
-  // 进房/关注是独立事件。普通聊天即使写着「关注了主播」，也不能被当成关注。
+  // 礼物只从直播连接的结构化消息识别，不能把观众手打的文字当成真实礼物。
   const eventSelector = '.webcast-chatroom___item, .webcast-chatroom___bottom-message, .webcast-chatroom___bottom_message';
+  const eventPattern = /^(.*?)\s*(进入了直播间|进入直播间|来到了直播间|来了|关注了主播|关注了你|关注了直播间|成为粉丝|加入了粉丝团)[！!。]?$/;
   const roomEvent = el => {
-    if (el.querySelector('.webcast-chatroom__room-message, img[src*="webcast_anchor_badge"], .cL385mHb')) return null;
+    // 平台公告与主播本人消息都不是观众事件。
+    if (el.querySelector('.webcast-chatroom__room-message, img[src*="webcast_anchor_badge"]')) return null;
+    // 普通聊天即使提到关注或送礼，也不是平台发出的事件提示。
+    if (el.querySelector('.cL385mHb')) return null;
     const full = clean(el.innerText || el.textContent);
-    const match = full.match(/^(.*?)\s*(进入了直播间|进入直播间|来到了直播间|来了|关注了主播|关注了你|关注了直播间)[！!。]?$/);
+    if (!full) return null;
+    const match = full.match(eventPattern);
     if (!match) return null;
+    const verb = match[2];
     const name = el.querySelector('.v8LY0gZF, [data-e2e="user-name"], [class*="nickname"], [class*="userName"]');
     const user = clean(name?.textContent || match[1]).replace(/[:：]$/, '');
     if (!user || user.length > 80) return null;
-    return { kind: match[2].startsWith('关注') ? 'follow' : 'join', user: user };
+    return { kind: verb.startsWith('关注') || verb === '成为粉丝' || verb === '加入了粉丝团' ? 'follow' : 'join', user: user, text: full };
   };
   if (!S.eventQueue) {
     S.eventQueue = [];
@@ -157,6 +163,7 @@ export const EXTRACT_JS = String.raw`
     list.querySelectorAll('.webcast-chatroom___item').forEach(it => {
       if (it.closest('.webcast-chatroom___bottom-message, .webcast-chatroom___bottom_message')) return;
       if (it.querySelector('.webcast-chatroom__room-message')) return; // 平台公告不是聊天消息
+      // 礼物、关注、进房由事件通道单独处理，不能再当作普通弹幕回一次。
       if (roomEvent(it)) return;
       const full = clean(it.innerText);
       if (!full) return;

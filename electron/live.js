@@ -8,6 +8,7 @@ import { CAPABILITY_DEFAULTS, skillInstructions } from './capabilities.js'
 import { generateImages } from './image-generation.js'
 import { runAgent } from './agent-runtime.js'
 import { EXTRACT_JS, OPEN_LOGIN_JS, FETCH_ROOM_JS, HARVEST_JS, CLOSE_PANEL_JS } from './extract.js'
+import { observeLiveEvents } from './live-events.js'
 
 const LIVE_HOME = 'https://live.douyin.com/'
 const PARTITION = 'persist:douyin'
@@ -400,9 +401,24 @@ export async function disconnect() {
 async function scraperTaskRun(rid) {
   RUNNING = true
   let win = null
+  let stopEvents = () => {}
   try {
     win = ensureLiveWindow()
+    const sessionNo = String(Math.floor(Date.now() / 1000))
+    let eventSeq = 0
+    stopEvents = await observeLiveEvents(win.webContents, event => {
+      if (!RUNNING) return
+      broadcast({
+        ...event, type: 'room_event', source: 'webcast',
+        id: `${sessionNo}:webcast:${event.id || ++eventSeq}`,
+        text: event.kind === 'gift' ? `${event.user} 送出了 ${event.gift} ×${event.count}`
+          : event.kind === 'follow' ? `${event.user} 关注了主播` : `${event.user} 进入了直播间`,
+        time: new Date(event.timestamp).toTimeString().slice(0, 8),
+      })
+    })
     await load(win, LIVE_HOME + rid)
+    // 尽早安装 DOM 监听，避免等待页面稳定的 12 秒漏掉已经出现的提示。
+    await evalJs(win, EXTRACT_JS).catch(() => null)
     await sleep(SETTLE)
     STATE.room = win.webContents.getTitle() || STATE.room
     STATE.status = '已进房'
@@ -419,8 +435,6 @@ async function scraperTaskRun(rid) {
     let lastPrune = Date.now()
     let lastAvPush = 0
     let avDirty = false
-    const sessionNo = String(Math.floor(Date.now() / 1000))
-
     while (RUNNING) {
       const now = Date.now()
       let data
@@ -495,6 +509,7 @@ async function scraperTaskRun(rid) {
     STATE.status = `异常: ${e.message}`
     sendStat()
   } finally {
+    stopEvents()
     RUNNING = false
   }
 }

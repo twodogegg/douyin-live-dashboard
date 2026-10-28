@@ -1,4 +1,4 @@
-import type { AiCard, DmContact, DmAgent, DmMemory, DmConv, DmMsg, DmGroup, DmMedia, DmStat, FishConfig, FishVoice, VoiceAudio, MemoryProfile, MsgItem, Stat, AgentCapabilities, CapabilityCatalog, GeneratedImage, DraftResult, StageConfig, StageState, StageReply } from './types'
+import type { AiCard, DmContact, DmAgent, DmMemory, DmConv, DmMsg, DmGroup, DmMedia, DmStat, FishConfig, FishVoice, VoiceAudio, MemoryProfile, MsgItem, Stat, AgentCapabilities, CapabilityCatalog, GeneratedImage, DraftResult, StageConfig, StageState, StageReply, StageEvents } from './types'
 
 async function req<T>(path: string, init?: RequestInit): Promise<T | null> {
   try {
@@ -50,6 +50,13 @@ export const api = {
   stageSave: (config: Partial<StageConfig>) => req<StageState & { ok: boolean; msg?: string }>('/stage/config', post(config)),
   stageTest: (text: string) => req<{ ok: boolean; msg?: string; reply?: StageReply }>('/stage/test', post({ text })),
   stageOpen: () => req<{ ok: boolean; msg?: string }>('/stage/window', post()),
+  // 播出窗口上报播放进度：服务端据此在主播说话时提前准备下一批回复。
+  stagePlayed: (payload: { id: string; index: number; final: boolean }) => req<{ ok: boolean }>('/stage/played', post(payload)),
+  stageAudio: (payload: { id: string; index: number }) =>
+    req<{ id?: string; index?: number; audio_url?: string; audio_error?: string; msg?: string }>('/stage/audio', post(payload)),
+  stageState: () => req<StageState & { ok: boolean; room_id: string; session: string }>('/stage/state'),
+  stageEvents: (query: { limit?: number; kind?: string; room_id?: string; session?: string; before?: number; days?: number } = {}) =>
+    req<StageEvents>(`/stage/events?${new URLSearchParams(Object.entries(query).filter(([, v]) => v !== '' && v !== undefined).map(([k, v]) => [k, String(v)]))}`),
   musicConnect: () => req<{ ok: boolean; msg?: string }>('/stage/music/connect', post()),
   musicControl: (action: 'play_pause' | 'next') => req<{ ok: boolean; msg?: string }>('/stage/music/control', post({ action })),
   musicRequest: (text: string) => req<{ ok: boolean; msg?: string }>('/stage/music/request', post({ text })),

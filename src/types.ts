@@ -37,6 +37,8 @@ export type StageConfig = {
   cooldown: number
   voice_enabled: boolean
   music_enabled: boolean
+  welcome_enabled: boolean
+  prefetch_enabled: boolean
 }
 export type MusicSong = { id: number; name: string; artists: string[]; user: string; query: string; request_id: string }
 export type StageMusic = {
@@ -50,6 +52,7 @@ export type StageMusic = {
   error: string
   notice: string
 }
+export type StageSentence = { index: number; text: string; audio_url: string }
 export type StageReply = {
   id: string
   user: string
@@ -58,6 +61,30 @@ export type StageReply = {
   audio_url: string
   audio_error: string
   test: boolean
+  // 逐句合成用：播出窗口按句播放，并在播到下一句前取音频。
+  sentences?: StageSentence[]
+  // 本次回复回应了哪一批观众消息。
+  batch?: { users: string[]; count: number }
+  // chat | gift | follow | welcome：决定舞台的状态样式。
+  mode?: string
+}
+export type StageLocal = {
+  state: 'idle' | 'arrival' | 'busy' | 'backchannel' | 'follow' | 'gifted' | 'spotlight'
+  label: string
+  reason: string
+  subject: { user?: string; gift?: string; count?: number; value?: number } | null
+  since: number
+  until: number
+}
+export type StageInbox = { unread: number; speaking: boolean; prefetched: boolean; dropped: number }
+export type StageActivityEvent = {
+  id: string
+  kind: 'join' | 'follow' | 'gift'
+  user: string
+  gift: string
+  count: number
+  value: number
+  time: string
 }
 export type StageState = {
   config: StageConfig
@@ -66,7 +93,47 @@ export type StageState = {
   error: string
   last_reply: StageReply | null
   usage: { prompt_tokens: number; completion_tokens: number; total_tokens: number; requests: number; unreported: number }
-  activity: { joins: number; follows: number; events: { id: string; kind: 'join' | 'follow'; user: string; time: string }[] }
+  activity: { joins: number; follows: number; gifts: number; gift_value: number; events: StageActivityEvent[] }
+  local?: StageLocal
+  inbox?: StageInbox
+}
+
+export type StageEvent = {
+  id: number
+  ts: number
+  time: string
+  room_id: string
+  session: string
+  kind: string
+  user: string
+  text: string
+  gift: string
+  count: number | null
+  value: number | null
+  state: string
+  mode: string
+  latency_ms: number | null
+}
+export type StageSummary = {
+  messages: number
+  replies: number
+  gifts: number
+  follows: number
+  joins: number
+  unknown_events: number
+  stale: number
+  gift_value: number
+  avg_latency_ms: number | null
+}
+export type StageEvents = {
+  ok: boolean
+  session: string
+  events: StageEvent[]
+  summary: StageSummary
+  ranking: {
+    gifts: { user: string; value: number; count: number; times: number }[]
+    viewers: { user: string; gifts: number; follows: number; messages: number }[]
+  }
 }
 
 // ---------- 私信 ----------

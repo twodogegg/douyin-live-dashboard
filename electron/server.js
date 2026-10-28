@@ -16,19 +16,7 @@ import { createStageAudio } from './stage-audio.js'
 import { createMusicMcp } from './music-mcp.js'
 import { createStageMusic } from './stage-music.js'
 import { createMusicAgent } from './music-agent.js'
-
-const MIME = {
-  '.html': 'text/html; charset=utf-8',
-  '.js': 'text/javascript; charset=utf-8',
-  '.css': 'text/css; charset=utf-8',
-  '.json': 'application/json; charset=utf-8',
-  '.svg': 'image/svg+xml',
-  '.png': 'image/png',
-  '.webm': 'video/webm',
-  '.jpg': 'image/jpeg',
-  '.woff2': 'font/woff2',
-  '.ico': 'image/x-icon',
-}
+import { serveStatic } from './static.js'
 
 function json(res, data, status = 200) {
   const body = JSON.stringify(data)
@@ -61,21 +49,10 @@ function readBody(req, limit = 1024 * 1024) {
   })
 }
 
-function serveStatic(res, staticDir, pathname) {
-  const safe = path.normalize(decodeURIComponent(pathname)).replace(/^(\.\.[/\\])+/, '')
-  let file = path.join(staticDir, safe)
-  if (!file.startsWith(staticDir)) file = path.join(staticDir, 'index.html')
-  if (!fs.existsSync(file) || fs.statSync(file).isDirectory()) file = path.join(staticDir, 'index.html')
-  if (!fs.existsSync(file)) {
-    res.writeHead(404)
-    return res.end('Not Found')
-  }
-  res.writeHead(200, { 'Content-Type': MIME[path.extname(file)] || 'application/octet-stream' })
-  res.end(fs.readFileSync(file))
-}
-
 export function startServer({ port = 0, staticDir, stageFile, showStage }) {
   const wss = new WebSocketServer({ noServer: true })
+  // 本次运行标识：工作台默认按它筛选，重启后可以区分不同场次。
+  const SESSION = String(Math.floor(Date.now() / 1000))
   const clients = new Set()
   const send = msg => {
     const data = JSON.stringify(msg)
@@ -100,6 +77,8 @@ export function startServer({ port = 0, staticDir, stageFile, showStage }) {
   stage = createLiveStage({
     music,
     file: stageFile,
+    // 行为流水落库：房间号取自当前的抓取状态，session 用于区分本次运行。
+    record: (entry) => db.stageLog({ ...entry, room_id: live.statMsg().room_id, session: SESSION }),
     chat: async (messages, options) => {
       const data = await live.chatRequest(messages, options)
       return { text: data.choices?.[0]?.message?.content || '', usage: data.usage }
@@ -145,6 +124,53 @@ export function startServer({ port = 0, staticDir, stageFile, showStage }) {
       }
       if (p === '/stage/config' && req.method === 'POST') return json(res, { ok: true, ...stage.configure(await readBody(req)) })
       if (p === '/stage/test' && req.method === 'POST') return json(res, { ok: true, reply: await stage.test(await readBody(req)) })
+
+      // 播出窗口每播完一句上报一次，服务端据此推进说话窗口并提前生成下一批。
+      if (p === '/stage/played' && req.method === 'POST') {
+        const body = await readBody(req)
+        stage.played(body)
+        return json(res, { ok: true })
+      }
+      // 逐句取音频：第一句随 stage_reply 下发，其余在播到该句时补齐。
+      if (p === '/stage/audio' && req.method === 'POST') {
+        const audio = await stage.audioFor(await readBody(req))
+        return json(res, audio || { ok: false, msg: '该句不属于当前回复' })
+      }
+
+      // 工作台：当前现场状态 + 行为流水 + 场次统计与榜单。
+      if (p === '/stage/state' && req.method === 'GET') {
+        const st = stage.snapshot()
+        return json(res, {
+          ok: true,
+          status: st.status,
+          error: st.error,
+          local: st.local,
+          inbox: st.inbox,
+          activity: st.activity,
+          usage: st.usage,
+          last_reply: st.last_reply,
+          music: st.music,
+          room_id: live.statMsg().room_id,
+          session: SESSION,
+        })
+      }
+      if (p === '/stage/events' && req.method === 'GET') {
+        const limit = Math.min(Number(url.searchParams.get('limit')) || 200, 1000)
+        const query = {
+          limit,
+          kind: url.searchParams.get('kind') || '',
+          room_id: url.searchParams.get('room_id') || '',
+          session: url.searchParams.get('session') || '',
+          before: Number(url.searchParams.get('before')) || 0,
+        }
+        return json(res, {
+          ok: true,
+          session: SESSION,
+          events: db.stageEvents(query),
+          summary: db.stageSummary({ room_id: query.room_id, session: query.session }),
+          ranking: db.stageRanking({ room_id: query.room_id, session: query.session, days: Number(url.searchParams.get('days')) || 7 }),
+        })
+      }
       if (p === '/stage/window' && req.method === 'POST') {
         if (!showStage) return json(res, { ok: false, msg: '请在桌面端打开播出窗口' })
         await showStage()
@@ -304,7 +330,7 @@ export function startServer({ port = 0, staticDir, stageFile, showStage }) {
       const m = p.match(/^\/history\/(\d+)$/)
       if (m && req.method === 'GET') return json(res, { messages: db.windowMessages(Number(m[1])) })
 
-      if (staticDir && req.method === 'GET') return serveStatic(res, staticDir, p)
+      if (staticDir && req.method === 'GET') return serveStatic(req, res, staticDir, p)
 
       json(res, { ok: false, msg: 'Not Found' }, 404)
     } catch (e) {

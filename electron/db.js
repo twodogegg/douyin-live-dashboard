@@ -56,6 +56,16 @@ export function initDb(file) {
   db.exec("CREATE TABLE IF NOT EXISTS dm_meta(key TEXT PRIMARY KEY, value TEXT)")
   db.exec("CREATE TABLE IF NOT EXISTS dm_contacts(conv_id TEXT PRIMARY KEY, relationship TEXT DEFAULT '', address TEXT DEFAULT '', tone TEXT DEFAULT '', boundaries TEXT DEFAULT '', updated REAL DEFAULT 0)")
   db.exec("CREATE TABLE IF NOT EXISTS dm_examples(id INTEGER PRIMARY KEY AUTOINCREMENT, conv_id TEXT NOT NULL, source_key TEXT NOT NULL, original TEXT NOT NULL, reply TEXT NOT NULL, created REAL NOT NULL)")
+  // 直播行为流水：观众消息、礼物、关注、回复、状态切换、播放进度与错误。
+  // 直播结束后仍能回看「这场直播发生了什么、哪些消息没被回应」。
+  db.exec(
+    'CREATE TABLE IF NOT EXISTS stage_events(' +
+      '  id INTEGER PRIMARY KEY AUTOINCREMENT, ts REAL, time TEXT, room_id TEXT, session TEXT,' +
+      '  kind TEXT, user TEXT, text TEXT, gift TEXT, count INTEGER, value REAL,' +
+      '  state TEXT, mode TEXT, latency_ms INTEGER, meta TEXT)',
+  )
+  db.exec('CREATE INDEX IF NOT EXISTS idx_stage_events_ts ON stage_events(ts)')
+  db.exec('CREATE INDEX IF NOT EXISTS idx_stage_events_kind ON stage_events(kind, ts)')
   return db
 }
 
@@ -259,6 +269,106 @@ export function dmPruneConvs(ids) {
 export function closeDb() {
   if (db) db.close()
   db = null
+}
+
+// ---------- 直播行为流水 ----------
+const STAGE_KINDS = new Set(['message', 'reply', 'gift', 'follow', 'join', 'welcome', 'played', 'state', 'error', 'unknown_event', 'stale'])
+
+/** 写入一条直播行为记录。未知类型直接丢弃，避免被外部输入污染统计。 */
+export function stageLog(entry) {
+  if (!db || !entry || !STAGE_KINDS.has(entry.kind)) return 0
+  const value = Number(entry.value)
+  const count = Number(entry.count)
+  const latency = Number(entry.latency_ms)
+  const info = db.prepare(
+    'INSERT INTO stage_events(ts, time, room_id, session, kind, user, text, gift, count, value, state, mode, latency_ms, meta) ' +
+      'VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+  ).run(
+    Number(entry.ts) || Date.now() / 1000,
+    entry.time || new Date().toTimeString().slice(0, 8),
+    String(entry.room_id || '').slice(0, 40),
+    String(entry.session || '').slice(0, 40),
+    entry.kind,
+    String(entry.user || '').slice(0, 80),
+    String(entry.text || '').slice(0, 2000),
+    String(entry.gift || '').slice(0, 40),
+    Number.isFinite(count) ? count : null,
+    Number.isFinite(value) ? value : null,
+    String(entry.state || '').slice(0, 20),
+    String(entry.mode || '').slice(0, 20),
+    Number.isFinite(latency) ? latency : null,
+    entry.meta && typeof entry.meta === 'object' ? JSON.stringify(entry.meta).slice(0, 4000) : '',
+  )
+  return Number(info.lastInsertRowid)
+}
+
+/** 按时间倒序读取流水；可按类型、房间或本次运行过滤。 */
+export function stageEvents({ limit = 200, kind = '', room_id = '', session = '', before = 0 } = {}) {
+  if (!db) return []
+  const where = []
+  const args = []
+  if (kind && STAGE_KINDS.has(kind)) { where.push('kind=?'); args.push(kind) }
+  if (room_id) { where.push('room_id=?'); args.push(String(room_id).slice(0, 40)) }
+  if (session) { where.push('session=?'); args.push(String(session).slice(0, 40)) }
+  if (before) { where.push('id<?'); args.push(Number(before)) }
+  const sql = `SELECT * FROM stage_events${where.length ? ` WHERE ${where.join(' AND ')}` : ''} ORDER BY id DESC LIMIT ?`
+  return db.prepare(sql).all(...args, Math.min(Math.max(Number(limit) || 200, 1), 1000))
+}
+
+/** 一场直播的统计：消息量、回应量、礼物与关注、平均开口延迟。 */
+export function stageSummary({ room_id = '', session = '' } = {}) {
+  if (!db) return null
+  const where = []
+  const args = []
+  if (room_id) { where.push('room_id=?'); args.push(String(room_id).slice(0, 40)) }
+  if (session) { where.push('session=?'); args.push(String(session).slice(0, 40)) }
+  const clause = where.length ? ` WHERE ${where.join(' AND ')}` : ''
+  const row = db.prepare(
+    `SELECT
+       SUM(kind='message') AS messages,
+       SUM(kind='reply') AS replies,
+       SUM(kind='gift') AS gifts,
+       SUM(kind='follow') AS follows,
+       SUM(kind='join') AS joins,
+       SUM(kind='unknown_event') AS unknown_events,
+       SUM(kind='stale') AS stale,
+       SUM(CASE WHEN kind='gift' THEN COALESCE(value,0) ELSE 0 END) AS gift_value,
+       AVG(CASE WHEN kind='reply' AND latency_ms IS NOT NULL THEN latency_ms END) AS avg_latency_ms
+     FROM stage_events${clause}`,
+  ).get(...args)
+  return {
+    messages: row?.messages || 0,
+    replies: row?.replies || 0,
+    gifts: row?.gifts || 0,
+    follows: row?.follows || 0,
+    joins: row?.joins || 0,
+    unknown_events: row?.unknown_events || 0,
+    stale: row?.stale || 0,
+    gift_value: row?.gift_value || 0,
+    avg_latency_ms: row?.avg_latency_ms ? Math.round(row.avg_latency_ms) : null,
+  }
+}
+
+/** 礼物与关注排行，用于工作台的榜单。 */
+export function stageRanking({ room_id = '', session = '', days = 7 } = {}) {
+  if (!db) return { gifts: [], viewers: [] }
+  const since = Date.now() / 1000 - Math.max(1, Number(days) || 7) * 86400
+  const scope = []
+  const args = [since]
+  if (room_id) { scope.push('AND room_id=?'); args.push(String(room_id).slice(0, 40)) }
+  if (session) { scope.push('AND session=?'); args.push(String(session).slice(0, 40)) }
+  const clause = scope.join(' ')
+  const gifts = db.prepare(
+    `SELECT user, SUM(value) AS value, SUM(count) AS count, COUNT(*) AS times
+     FROM stage_events WHERE kind='gift' AND ts>=? ${clause}
+     GROUP BY user ORDER BY value DESC, times DESC LIMIT 20`,
+  ).all(...args)
+  const viewers = db.prepare(
+    `SELECT user, SUM(kind='gift') AS gifts, SUM(kind='follow') AS follows, SUM(kind='message') AS messages
+     FROM stage_events WHERE ts>=? AND user<>'' ${clause}
+     GROUP BY user ORDER BY gifts DESC, follows DESC, messages DESC LIMIT 20`,
+  ).all(...args)
+  return { gifts, viewers }
 }
 
 export function dmGetMemory(convId) {
