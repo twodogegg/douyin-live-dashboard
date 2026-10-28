@@ -224,3 +224,42 @@ test('历史分段按旧到新读取，可跨游标重扫全部消息', () => {
   assert.deepEqual(older.map(m => m.text), ['第一条'])
   assert.equal(db.dmHistoryChunk(conv, older[0].seq, 2).length, 0)
 })
+
+test('直播行为流水：写入、按类型与场次筛选、统计与榜单', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'douyin-db-'))
+  const file = path.join(dir, 'stage.db')
+  db.initDb(file)
+  const base = { room_id: '1234', session: 's1', time: '10:00:00' }
+  db.stageLog({ ...base, kind: 'message', user: '海盐', text: '你好' })
+  db.stageLog({ ...base, kind: 'message', user: '小鹿', text: '在吗' })
+  db.stageLog({ ...base, kind: 'reply', user: '海盐', text: '你好呀', mode: 'chat', latency_ms: 800 })
+  db.stageLog({ ...base, kind: 'reply', user: '小鹿', text: '在的', mode: 'chat', latency_ms: 1200 })
+  db.stageLog({ ...base, kind: 'gift', user: '海盐', gift: '小心心', count: 5, value: 5 })
+  db.stageLog({ ...base, kind: 'gift', user: '海盐', gift: '嘉年华', count: 1, value: 30000 })
+  db.stageLog({ ...base, kind: 'follow', user: '小鹿' })
+  db.stageLog({ ...base, kind: 'join', user: '路人' })
+  db.stageLog({ ...base, kind: 'stale', text: '过期 2 条' })
+  // 不认识的类型被丢弃，不污染统计。
+  assert.equal(db.stageLog({ ...base, kind: 'nope' }), 0)
+
+  const summary = db.stageSummary({ room_id: '1234', session: 's1' })
+  assert.equal(summary.messages, 2)
+  assert.equal(summary.replies, 2)
+  assert.equal(summary.gifts, 2)
+  assert.equal(summary.follows, 1)
+  assert.equal(summary.joins, 1)
+  assert.equal(summary.stale, 1)
+  assert.equal(summary.gift_value, 30005)
+  assert.equal(summary.avg_latency_ms, 1000)
+
+  const gifts = db.stageEvents({ kind: 'gift', room_id: '1234' })
+  assert.equal(gifts.length, 2)
+  assert.equal(gifts[0].gift, '嘉年华', '按时间倒序返回')
+
+  const ranking = db.stageRanking({ room_id: '1234', session: 's1' })
+  assert.equal(ranking.gifts[0].user, '海盐')
+  assert.equal(ranking.gifts[0].value, 30005)
+  assert.equal(ranking.viewers[0].user, '海盐')
+
+  fs.rmSync(dir, { recursive: true, force: true })
+})

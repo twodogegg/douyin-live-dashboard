@@ -1,13 +1,25 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { api } from '../api'
 import type { StageReply } from '../types'
 
 type RoutedAudio = HTMLAudioElement & { setSinkId?: (id: string) => Promise<void> }
 const DEVICE_KEY = 'live-stage-audio-output'
 
+// 一句播完到下一句开口之间的气口。太短会显得抢话，太长就有明显的"卡一下"。
+const GAP_MS = 180
+
+/**
+ * 播出窗口的语音播放。
+ *
+ * 逐句播放而不是整段播：每播完一句就向后端上报 stage_played，
+ * 后端在主播说话期间就开始生成并合成下一批回复，所以下一句往往是"已经在缓冲里"的。
+ */
 export function useStagePlayback(reply: StageReply | null, enabled: boolean) {
   const [armed, setArmed] = useState(false)
   const [speaking, setSpeaking] = useState(false)
   const [current, setCurrent] = useState<StageReply | null>(null)
+  // 当前播到第几句，用于在画面上显示进度。
+  const [progress, setProgress] = useState({ index: 0, total: 1 })
   const [error, setError] = useState('')
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([])
   const [device, setDevice] = useState(() => localStorage.getItem(DEVICE_KEY) || 'default')
@@ -18,6 +30,11 @@ export function useStagePlayback(reply: StageReply | null, enabled: boolean) {
   const config = useRef({ armed, device })
   const seen = useRef(new Set<string>())
   const kick = useRef<() => void>(() => {})
+  // 逐句播放状态：当前回复、句序与已取到的音频地址。
+  const plan = useRef<{ reply: StageReply | null; index: number; audio: Map<number, { url: string; error: string }> }>({
+    reply: null, index: 0, audio: new Map(),
+  })
+  const gapTimer = useRef<number | undefined>(undefined)
   config.current = { armed, device }
 
   const refreshDevices = useCallback(async (requestPermission = false) => {
@@ -40,6 +57,7 @@ export function useStagePlayback(reply: StageReply | null, enabled: boolean) {
   const stop = useCallback(() => {
     generation.current++
     queue.current = []
+    window.clearTimeout(gapTimer.current)
     if (audio.current) {
       audio.current.onended = null
       audio.current.onerror = null
@@ -49,27 +67,81 @@ export function useStagePlayback(reply: StageReply | null, enabled: boolean) {
       audio.current = null
     }
     running.current = false
+    plan.current = { reply: null, index: 0, audio: new Map() }
     setSpeaking(false)
     setCurrent(null)
+    setProgress({ index: 0, total: 1 })
   }, [])
 
-  const playNext = useCallback(async () => {
-    if (running.current || !queue.current.length || !config.current.armed) return
-    const next = queue.current.shift()!
+  // 取第 index 句的音频：第一句随回复下发，后面按需向后端要。
+  const loadSentence = async (target: StageReply, index: number): Promise<{ url: string; error: string }> => {
+    const cached = plan.current.audio.get(index)
+    if (cached) return cached
+    const inline = target.sentences?.[index]?.audio_url
+    if (inline) {
+      plan.current.audio.set(index, { url: inline, error: '' })
+      return { url: inline, error: '' }
+    }
+    if (!target.sentences?.length) {
+      const fallback = index === 0 ? { url: target.audio_url, error: target.audio_error } : { url: '', error: '' }
+      plan.current.audio.set(index, fallback)
+      return fallback
+    }
+    try {
+      const result = await api.stageAudio({ id: target.id, index })
+      const value = { url: result?.audio_url || '', error: result?.audio_error || '' }
+      plan.current.audio.set(index, value)
+      return value
+    } catch {
+      return { url: '', error: '获取下一句语音失败' }
+    }
+  }
+
+  const playSentence = useCallback(async () => {
+    if (running.current || !config.current.armed) return
+    const target = plan.current.reply
+    if (!target) {
+      // 当前回复播完了：取队列里下一条继续。队列最多 5 条，超出的旧回复直接丢弃。
+      const next = queue.current.shift()
+      if (next) {
+        plan.current = { reply: next, index: 0, audio: new Map() }
+        kick.current()
+      }
+      return
+    }
+    const index = plan.current.index
+    const total = target.sentences?.length || 1
     const token = generation.current
-    setCurrent(next)
-    if (!next.audio_url) { kick.current(); return }
+    if (index >= total) return
     running.current = true
-    const player = new Audio(next.audio_url) as RoutedAudio
-    audio.current = player
+    setCurrent(target)
+    setProgress({ index, total })
+
     const finish = (message = '') => {
       if (token !== generation.current) return
       if (message) setError(message)
       running.current = false
       audio.current = null
       setSpeaking(false)
-      kick.current()
+      plan.current.index += 1
+      const done = plan.current.index >= total
+      // 每播完一句就上报：后端据此打开"说话窗口"，提前把下一批回复准备好。
+      void api.stagePlayed({ id: target.id, index, final: done })
+      if (done) plan.current = { reply: null, index: 0, audio: new Map() }
+      setCurrent(null)
+      // 句与句之间留一点气口；整条播完则立刻看队列里有没有下一条。
+      gapTimer.current = window.setTimeout(() => kick.current(), done ? 0 : GAP_MS)
     }
+
+    const sentence = await loadSentence(target, index)
+    if (token !== generation.current) return
+    if (!sentence.url) {
+      if (sentence.error) setError(sentence.error)
+      finish(sentence.error)
+      return
+    }
+    const player = new Audio(sentence.url) as RoutedAudio
+    audio.current = player
     player.onended = () => finish()
     player.onerror = () => finish('音频加载失败，请重新试播。')
     try {
@@ -77,6 +149,7 @@ export function useStagePlayback(reply: StageReply | null, enabled: boolean) {
       if (selected !== 'default' && !player.setSinkId) throw new Error('当前浏览器不支持选择播放设备，请使用桌面端或 Chrome。')
       if (player.setSinkId) await player.setSinkId(selected)
       if (token !== generation.current) return
+      // 气口由 finish 统一控制，这里直接开口，避免两句之间多等一倍。
       await player.play()
       if (token !== generation.current) { player.pause(); return }
       setError('')
@@ -91,7 +164,7 @@ export function useStagePlayback(reply: StageReply | null, enabled: boolean) {
       setError(e instanceof Error ? `播放失败：${e.message}` : '播放失败，请检查输出设备并重新启用语音。')
     }
   }, [])
-  kick.current = () => { void playNext() }
+  kick.current = () => { void playSentence() }
 
   useEffect(() => {
     if (!reply) { stop(); return }
@@ -99,8 +172,17 @@ export function useStagePlayback(reply: StageReply | null, enabled: boolean) {
     seen.current.add(reply.id)
     if (seen.current.size > 300) seen.current.delete(seen.current.values().next().value!)
     // 语音关闭期间只更新气泡，重新开启时不追播旧回复。
-    if (!reply.audio_url || !config.current.armed) { setCurrent(reply); return }
-    queue.current = [...queue.current, reply].slice(-5)
+    if (!config.current.armed) { setCurrent(reply); plan.current = { reply, index: 0, audio: new Map() }; return }
+    if (!reply.audio_url && !reply.sentences?.[0]?.audio_url) {
+      setCurrent(reply)
+      setProgress({ index: 0, total: reply.sentences?.length || 1 })
+      // 没有音频也要把"整条播完"上报出去，让后端继续后续调度。
+      void api.stagePlayed({ id: reply.id, index: (reply.sentences?.length || 1) - 1, final: true })
+      return
+    }
+    // 正在播上一条时不打断：排到队列里，播完自然接上。
+    if (plan.current.reply) { queue.current = [...queue.current, reply].slice(-5); return }
+    plan.current = { reply, index: 0, audio: new Map() }
     kick.current()
   }, [reply, stop])
 
@@ -116,6 +198,7 @@ export function useStagePlayback(reply: StageReply | null, enabled: boolean) {
   useEffect(() => {
     return () => {
       generation.current++
+      window.clearTimeout(gapTimer.current)
       audio.current?.pause()
       queue.current = []
     }
@@ -130,5 +213,5 @@ export function useStagePlayback(reply: StageReply | null, enabled: boolean) {
     } catch { setError('切换播放设备失败，请检查虚拟声卡是否可用。') }
   }
 
-  return { armed, setArmed, speaking, current, error, devices, device, chooseDevice, refreshDevices }
+  return { armed, setArmed, speaking, current, currentIndex: progress.index, total: progress.total, error, devices, device, chooseDevice, refreshDevices }
 }

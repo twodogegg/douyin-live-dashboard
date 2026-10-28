@@ -129,6 +129,8 @@ export function useLiveStream() {
       }
       ws.onclose = () => {
         setWsDown(true)
+        setStage(null)
+        setStageReply(null)
         if (!closed) timer = window.setTimeout(connect, 3000)
       }
     }
