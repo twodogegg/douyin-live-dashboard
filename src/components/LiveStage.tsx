@@ -227,7 +227,7 @@ export function LiveStageStudio({ messages, stat, stage, reply, wsDown, onOpenSe
       </section>
       <aside className="stage-controls">
         <div className="stage-control-heading"><Settings2 /><h2>互动设置</h2><span>{stage ? stage.config.enabled ? '运行中' : '已暂停' : '未连接'}</span></div>
-        <div className="stage-usage-note">主播互动累计 {(stage?.usage?.total_tokens || 0).toLocaleString()} token · {stage?.usage?.requests || 0} 次调用<small>本次运行累计，含点歌识别与试播；重启后清零。进房与关注统计以页面实际显示的事件为准。</small>{!!stage?.usage?.unreported && <small>{stage.usage.unreported} 次调用未返回 token 用量，未计入累计。</small>}</div>
+          <div className="stage-usage-note">主播互动累计 {(stage?.usage?.total_tokens || 0).toLocaleString()} token · {stage?.usage?.requests || 0} 次调用<small>本次运行累计，含点歌识别与试播；重启后清零。进房与关注统计以实际检测到的事件为准。</small>{!!stage?.usage?.unreported && <small>{stage.usage.unreported} 次调用未返回 token 用量，未计入累计。</small>}</div>
         <fieldset disabled={busy || !draft}>
           <label htmlFor="stage-name">主播名字</label><input id="stage-name" value={draft?.name || ''} maxLength={30} onChange={e => draft && setDraft({ ...draft, name: e.target.value })} />
           <label htmlFor="stage-persona">主播人设</label><textarea id="stage-persona" rows={5} value={draft?.system_prompt || ''} maxLength={6000} onChange={e => draft && setDraft({ ...draft, system_prompt: e.target.value })} />

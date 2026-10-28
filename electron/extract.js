@@ -85,13 +85,9 @@ export const EXTRACT_JS = String.raw`
     return v;
   };
 
-  // 进房/关注/礼物是独立事件。普通聊天即使写着「关注了主播」，也不能被当成关注。
-  // 礼物提示在页面上是单独的气泡（常带礼物图标或「×N」），与聊天行结构不同。
-  // 礼物提示常出现在独立的气泡里（不在聊天列表内），也可能出现在列表里。
-  // 两边都要扫到，否则屏幕上飘的礼物永远进不了事件队列。
-  const eventSelector = '.webcast-chatroom___item, .webcast-chatroom___bottom-message, .webcast-chatroom___bottom_message, [data-e2e*="gift"], [class*="giftMessage"], [class*="gift-message"], [class*="giftItem"], [class*="GiftItem"]';
-  const giftSelector = '[class*="gift"], [class*="Gift"], [data-e2e*="gift"], [class*="prop"], [class*="Prop"]';
-  const eventPattern = /^(.*?)\s*(进入了直播间|进入直播间|来到了直播间|来了|关注了主播|关注了你|关注了直播间|成为粉丝|加入了粉丝团|送出了|送给主播|赠送了|投喂了|送上了|送出|投喂|送上|赠送)[！!。]?\s*(?:(.*?)\s*(?:[×xX*]\s*(\d{1,4}))?)?$/;
+  // 礼物只从直播连接的结构化消息识别，不能把观众手打的文字当成真实礼物。
+  const eventSelector = '.webcast-chatroom___item, .webcast-chatroom___bottom-message, .webcast-chatroom___bottom_message';
+  const eventPattern = /^(.*?)\s*(进入了直播间|进入直播间|来到了直播间|来了|关注了主播|关注了你|关注了直播间|成为粉丝|加入了粉丝团)[！!。]?$/;
   const roomEvent = el => {
     // 平台公告与主播本人消息都不是观众事件。
     if (el.querySelector('.webcast-chatroom__room-message, img[src*="webcast_anchor_badge"]')) return null;
@@ -105,17 +101,7 @@ export const EXTRACT_JS = String.raw`
     const name = el.querySelector('.v8LY0gZF, [data-e2e="user-name"], [class*="nickname"], [class*="userName"]');
     const user = clean(name?.textContent || match[1]).replace(/[:：]$/, '');
     if (!user || user.length > 80) return null;
-    if (verb.startsWith('关注') || verb === '成为粉丝' || verb === '加入了粉丝团') return match[3] ? null : { kind: 'follow', user: user, text: full };
-    if (verb.includes('进入') || verb.includes('来到') || verb === '来了') return match[3] ? null : { kind: 'join', user: user, text: full };
-    // 礼物：名称来自文案剩余部分，也可能是气泡里单独的礼物元素。
-    const giftNode = el.querySelector('[class*="giftName"], [class*="gift-name"], [data-e2e*="gift"]');
-    const gift = clean(match[3] || giftNode?.textContent || '').replace(/^[:：]\s*/, '');
-    if (!gift || gift.length > 30) {
-      // 结构不像礼物气泡的，交给后端按原文再解析一次，匹配不上就记成未知事件。
-      return { kind: 'unknown', user: user, text: full };
-    }
-    const count = Number.parseInt(match[4] || '1', 10);
-    return { kind: 'gift', user: user, gift: gift, count: Number.isFinite(count) && count > 0 ? count : 1, text: full };
+    return { kind: verb.startsWith('关注') || verb === '成为粉丝' || verb === '加入了粉丝团' ? 'follow' : 'join', user: user, text: full };
   };
   if (!S.eventQueue) {
     S.eventQueue = [];
@@ -128,15 +114,12 @@ export const EXTRACT_JS = String.raw`
       roots.forEach(root => {
         if (!root) return;
         const event = roomEvent(root);
-        // 礼物事件按「观众 + 礼物」去重（连刷数量变化不算重复）；其余按「类型 + 观众」。
-        const signature = event ? JSON.stringify(event.kind === 'gift' ? [event.kind, event.user, event.gift] : [event.kind, event.user]) : '';
+        const signature = event ? JSON.stringify([event.kind, event.user]) : '';
         if (S.eventValues.get(root) === signature) return;
         S.eventValues.set(root, signature);
         if (!event) return;
         const now = Date.now();
-        // 礼物在同一页面上会随数量变化多次刷新，给更短的去重窗口。
-        const window = event.kind === 'gift' ? 1200 : 3000;
-        const duplicate = now - (S.eventRecent.get(signature) || 0) < window;
+        const duplicate = now - (S.eventRecent.get(signature) || 0) < 3000;
         S.eventRecent.set(signature, now);
         if (S.eventRecent.size > 1000) S.eventRecent.delete(S.eventRecent.keys().next().value);
         if (emit && !duplicate) {

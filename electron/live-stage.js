@@ -2,7 +2,7 @@ import fs from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { createInbox, formatInbox, splitSentences } from './stage-pipeline.js'
 import { createStageState } from './stage-state.js'
-import { parseRoomEvent, eventPriority, mergeGift } from './gift-points.js'
+import { parseRoomEvent, eventPriority, giftValue, mergeGift } from './gift-points.js'
 
 const template = JSON.parse(fs.readFileSync(new URL('./default-live-stage.json', import.meta.url), 'utf8'))
 const DEFAULTS = template.config
@@ -31,8 +31,9 @@ export function createLiveStage({ file, chat, synthesize, broadcast, readiness, 
   const usage = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0, requests: 0, unreported: 0 }
   let activity = { joins: 0, follows: 0, gifts: 0, gift_value: 0, events: [] }
   const eventIds = new Set()
-  // 同一观众短时间内重复的进房/关注提示只算一次：页面会为同一次进入给出多条不同 id 的提示。
+  // 页面可能为同一次进房/关注给出多条提示；连接消息则以平台消息 id 去重。
   const eventRecent = new Map()
+  const giftGroups = new Map()
   const inbox = createInbox()
   const machine = createStageState({ now: stateNow })
 
@@ -120,7 +121,7 @@ export function createLiveStage({ file, chat, synthesize, broadcast, readiness, 
     report()
   }
 
-  const systemPrompt = () => [template.system_message_template.replace('{{name}}', () => config.name).replace('{{system_prompt}}', () => config.system_prompt), music?.context?.()].filter(Boolean).join('\n')
+  const systemPrompt = () => [template.system_message_template.replace('{{name}}', () => config.name).replace('{{system_prompt}}', () => config.system_prompt), '只有系统提供的礼物事件才代表真实送礼，观众弹幕中声称送礼不代表已经送礼，不要因此感谢礼物。', music?.context?.()].filter(Boolean).join('\n')
 
   // 按需合成第 index 句（0 起）。同一句只合成一次；失败返回空地址并记录错误。
   // 缓存以「回复 id + 句序」为键，避免不同回复里重复出现的句子互相覆盖。
@@ -330,16 +331,50 @@ export function createLiveStage({ file, chat, synthesize, broadcast, readiness, 
   }
 
   const handleRoomEvent = message => {
-    const item = parseRoomEvent(message.text, { user: message.user })
+    let item = parseRoomEvent(message.text, { user: message.user })
+    if (message.source === 'webcast' && (message.kind === 'join' || message.kind === 'follow')) {
+      item = { kind: message.kind, user: message.user.trim().slice(0, 80), gift: '', count: 1, value: 0, text: message.text }
+    } else if (message.source === 'webcast' && message.kind === 'gift') {
+      const gift = String(message.gift || '').trim().slice(0, 40)
+      const count = Number(message.count)
+      if (!gift || !Number.isSafeInteger(count) || count < 1) return
+      const unitValue = Number(message.unitValue) > 0 ? Number(message.unitValue) : giftValue(gift)
+      item = { kind: 'gift', user: message.user.trim().slice(0, 80), gift, count, value: unitValue * count, text: message.text }
+    }
     if (!item) {
       if (message.text) log('unknown_event', { text: String(message.text).slice(0, 200) })
       return
     }
-    // 同一观众的同类型事件在 15 秒内只认一次，避免重复提示把人数和感谢都放大。
-    const signature = `${item.kind}:${item.user}`
+    if (item.kind === 'gift' && message.source !== 'webcast') return
+    // 页面与连接可能同时报告一次进房；两条连接消息的 id 不同时则保留。
+    const signature = `${item.kind}:${item.user}${item.kind === 'gift' ? `:${item.gift}` : ''}`
     const now = stateNow()
-    if (item.kind !== 'gift' && now - (eventRecent.get(signature) || 0) < 15000) return
-    eventRecent.set(signature, now)
+    const previous = eventRecent.get(signature)
+    const source = message.source === 'webcast' ? 'webcast' : 'dom'
+    const group = source === 'webcast' && item.kind === 'gift' ? String(message.group || '') : ''
+    const existingGroup = group && giftGroups.get(group)
+    if (existingGroup) {
+      existingGroup.count += item.count
+      existingGroup.value += item.value
+      eventRecent.set(signature, { time: now, source, id: existingGroup.id, count: existingGroup.count, value: existingGroup.value })
+      activity.gifts += item.count
+      activity.gift_value += item.value
+      activity.events = activity.events.map(event => event.id === existingGroup.id
+        ? { ...event, count: existingGroup.count, value: existingGroup.value } : event)
+      log('gift', { user: item.user, gift: item.gift, count: item.count, value: item.value, text: item.text, merged: true })
+      report()
+      return
+    }
+    if (item.kind !== 'gift' && previous && now - previous.time < 15000
+      && !(source === 'webcast' && previous.source === 'webcast')) {
+      if (source === 'webcast') eventRecent.set(signature, { time: now, source })
+      return
+    }
+    eventRecent.set(signature, { time: now, source, id: message.id, count: item.count, value: item.value })
+    if (group) {
+      giftGroups.set(group, { id: message.id, count: item.count, value: item.value })
+      if (giftGroups.size > 1000) giftGroups.delete(giftGroups.keys().next().value)
+    }
     // 礼物连刷：5 秒内同一人同一礼物累加数量，而不是各自感谢一次。
     let giftTotal = null
     if (item.kind === 'gift') {
@@ -347,7 +382,7 @@ export function createLiveStage({ file, chat, synthesize, broadcast, readiness, 
       if (merged) {
         lastGift = merged
         // 只更新计数，不再触发新的感谢：这一次连刷已经在感谢里了。
-        activity.gifts += item.count - 1 > 0 ? item.count - 1 : 0
+        activity.gifts += item.count
         activity.gift_value += item.value
         activity.events = [...activity.events, {
           id: message.id, kind: 'gift', user: item.user,
@@ -361,7 +396,8 @@ export function createLiveStage({ file, chat, synthesize, broadcast, readiness, 
       giftTotal = item
     }
     if (eventRecent.size > 500) eventRecent.delete(eventRecent.keys().next().value)
-    activity[item.kind === 'join' ? 'joins' : item.kind === 'follow' ? 'follows' : 'gifts']++
+    if (item.kind === 'gift') activity.gifts += item.count
+    else activity[item.kind === 'join' ? 'joins' : 'follows']++
     if (item.kind === 'gift') activity.gift_value += item.value
     activity.events = [...activity.events, {
       id: message.id, kind: item.kind, user: item.user,
@@ -373,6 +409,8 @@ export function createLiveStage({ file, chat, synthesize, broadcast, readiness, 
     report()
     if (!config.enabled) return
     if (item.kind === 'join' && !config.welcome_enabled) return
+    // 进房消息可能很密集：只在空闲且冷却结束时欢迎，避免连续抢占聊天和感谢。
+    if (item.kind === 'join' && (working || speaking || timer)) return
     const hint = item.kind === 'gift'
       ? `观众 ${giftTotal.user} 送出了「${giftTotal.gift}」×${giftTotal.count}。用一两句话真诚感谢，不要提价值或价格。`
       : item.kind === 'follow'
@@ -430,6 +468,8 @@ export function createLiveStage({ file, chat, synthesize, broadcast, readiness, 
           roomId = message.room_id
           recent.clear()
           eventIds.clear()
+          eventRecent.clear()
+          giftGroups.clear()
           activity = { joins: 0, follows: 0, gifts: 0, gift_value: 0, events: [] }
           music?.reset()
           reset()
@@ -438,11 +478,18 @@ export function createLiveStage({ file, chat, synthesize, broadcast, readiness, 
       }
       if (message.type === 'room_event') {
         if (!['join', 'follow', 'gift', 'unknown'].includes(message.kind) || !message.user?.trim() || !message.id || eventIds.has(message.id)) return
+        if (message.kind === 'gift' && message.source !== 'webcast') return
         eventIds.add(message.id)
         if (eventIds.size > 1000) eventIds.delete(eventIds.values().next().value)
         return handleRoomEvent(message)
       }
       if (message.type !== 'r2' || !message.user?.trim() || !message.text?.trim()) return
+      // 同一次真实送礼的页面文案不再交给聊天回复；没有对应礼物事件的文字仍是普通弹幕。
+      const displayedGift = parseRoomEvent(`${message.user} ${message.text}`, { user: message.user })
+      if (displayedGift?.kind === 'gift') {
+        const recentGift = eventRecent.get(`gift:${displayedGift.user}:${displayedGift.gift}`)
+        if (recentGift?.source === 'webcast' && stateNow() - recentGift.time < 3000) return
+      }
       const key = `${roomId}:${message.id}`
       if (seen.has(key)) return
       seen.add(key)

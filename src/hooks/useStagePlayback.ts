@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { api } from '../api'
+import { createStageAudioQueue } from '../lib/stage-audio-queue'
 import type { StageReply } from '../types'
 
 type RoutedAudio = HTMLAudioElement & { setSinkId?: (id: string) => Promise<void> }
@@ -25,6 +26,7 @@ export function useStagePlayback(reply: StageReply | null, enabled: boolean) {
   const [device, setDevice] = useState(() => localStorage.getItem(DEVICE_KEY) || 'default')
   const audio = useRef<RoutedAudio | null>(null)
   const queue = useRef<StageReply[]>([])
+  const [queuedAudio] = useState(() => createStageAudioQueue())
   const running = useRef(false)
   const generation = useRef(0)
   const config = useRef({ armed, device })
@@ -57,6 +59,7 @@ export function useStagePlayback(reply: StageReply | null, enabled: boolean) {
   const stop = useCallback(() => {
     generation.current++
     queue.current = []
+    queuedAudio.clear()
     window.clearTimeout(gapTimer.current)
     if (audio.current) {
       audio.current.onended = null
@@ -71,12 +74,18 @@ export function useStagePlayback(reply: StageReply | null, enabled: boolean) {
     setSpeaking(false)
     setCurrent(null)
     setProgress({ index: 0, total: 1 })
-  }, [])
+  }, [queuedAudio])
 
   // 取第 index 句的音频：第一句随回复下发，后面按需向后端要。
   const loadSentence = async (target: StageReply, index: number): Promise<{ url: string; error: string }> => {
     const cached = plan.current.audio.get(index)
     if (cached) return cached
+    const queued = index === 0 && queuedAudio.get(target.id)
+    if (queued) {
+      const value = await queued
+      plan.current.audio.set(index, value)
+      return value
+    }
     const inline = target.sentences?.[index]?.audio_url
     if (inline) {
       plan.current.audio.set(index, { url: inline, error: '' })
@@ -89,7 +98,7 @@ export function useStagePlayback(reply: StageReply | null, enabled: boolean) {
     }
     try {
       const result = await api.stageAudio({ id: target.id, index })
-      const value = { url: result?.audio_url || '', error: result?.audio_error || '' }
+      const value = { url: result?.audio_url || '', error: result?.audio_error || result?.msg || '' }
       plan.current.audio.set(index, value)
       return value
     } catch {
@@ -117,9 +126,12 @@ export function useStagePlayback(reply: StageReply | null, enabled: boolean) {
     setCurrent(target)
     setProgress({ index, total })
 
+    let finished = false
     const finish = (message = '') => {
-      if (token !== generation.current) return
+      if (finished || token !== generation.current) return
+      finished = true
       if (message) setError(message)
+      if (index === 0) queuedAudio.discard(target.id)
       running.current = false
       audio.current = null
       setSpeaking(false)
@@ -143,27 +155,34 @@ export function useStagePlayback(reply: StageReply | null, enabled: boolean) {
     const player = new Audio(sentence.url) as RoutedAudio
     audio.current = player
     player.onended = () => finish()
-    player.onerror = () => finish('音频加载失败，请重新试播。')
+    player.onerror = () => finish('语音加载失败，已跳过当前句。')
+    let sinkReady = false
     try {
       const selected = config.current.device
       if (selected !== 'default' && !player.setSinkId) throw new Error('当前浏览器不支持选择播放设备，请使用桌面端或 Chrome。')
       if (player.setSinkId) await player.setSinkId(selected)
-      if (token !== generation.current) return
+      if (finished || token !== generation.current) return
+      sinkReady = true
       // 气口由 finish 统一控制，这里直接开口，避免两句之间多等一倍。
       await player.play()
-      if (token !== generation.current) { player.pause(); return }
+      if (finished || token !== generation.current) { player.pause(); return }
       setError('')
       setSpeaking(true)
     } catch (e) {
-      if (token !== generation.current) return
+      if (finished || token !== generation.current) return
+      player.onerror = null
       player.pause()
+      if (sinkReady && (!(e instanceof DOMException) || e.name !== 'NotAllowedError')) {
+        finish('语音加载失败，已跳过当前句。')
+        return
+      }
       running.current = false
       audio.current = null
       setArmed(false)
       setSpeaking(false)
       setError(e instanceof Error ? `播放失败：${e.message}` : '播放失败，请检查输出设备并重新启用语音。')
     }
-  }, [])
+  }, [queuedAudio])
   kick.current = () => { void playSentence() }
 
   useEffect(() => {
@@ -172,7 +191,7 @@ export function useStagePlayback(reply: StageReply | null, enabled: boolean) {
     seen.current.add(reply.id)
     if (seen.current.size > 300) seen.current.delete(seen.current.values().next().value!)
     // 语音关闭期间只更新气泡，重新开启时不追播旧回复。
-    if (!config.current.armed) { setCurrent(reply); plan.current = { reply, index: 0, audio: new Map() }; return }
+    if (!config.current.armed) { setCurrent(reply); return }
     if (!reply.audio_url && !reply.sentences?.[0]?.audio_url) {
       setCurrent(reply)
       setProgress({ index: 0, total: reply.sentences?.length || 1 })
@@ -181,10 +200,17 @@ export function useStagePlayback(reply: StageReply | null, enabled: boolean) {
       return
     }
     // 正在播上一条时不打断：排到队列里，播完自然接上。
-    if (plan.current.reply) { queue.current = [...queue.current, reply].slice(-5); return }
+    if (plan.current.reply) {
+      // 语音在上一条播放时就取到本地，避免排队超过一次性地址的有效期。
+      queuedAudio.preload(reply.id, reply.sentences?.[0]?.audio_url || reply.audio_url)
+      const next = [...queue.current, reply]
+      for (const dropped of next.slice(0, -5)) queuedAudio.discard(dropped.id)
+      queue.current = next.slice(-5)
+      return
+    }
     plan.current = { reply, index: 0, audio: new Map() }
     kick.current()
-  }, [reply, stop])
+  }, [reply, stop, queuedAudio])
 
   useEffect(() => {
     if (!enabled) stop()
@@ -200,9 +226,10 @@ export function useStagePlayback(reply: StageReply | null, enabled: boolean) {
       generation.current++
       window.clearTimeout(gapTimer.current)
       audio.current?.pause()
+      queuedAudio.clear()
       queue.current = []
     }
-  }, [])
+  }, [queuedAudio])
 
   const chooseDevice = async (id: string) => {
     try {
